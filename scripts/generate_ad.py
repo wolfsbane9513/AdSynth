@@ -76,13 +76,13 @@ def load_product_info(file_path: str = None) -> Dict[str, str]:
     return Config.default_product_info()
 
 def save_data(data: Any, filename: str) -> None:
-    """Save data to a file."""
+    """Save data to a file with proper encoding."""
     if isinstance(data, str):
-        with open(filename, "w") as f:
+        with open(filename, "w", encoding="utf-8") as f:
             f.write(data)
     else:
-        with open(filename, "w") as f:
-            json.dump(data, f, indent=2)
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
     print(f"Saved data to {filename}")
 
 def main() -> None:

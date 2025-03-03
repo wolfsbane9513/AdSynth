@@ -29,40 +29,45 @@ def generate_ad_script(prompt: str, model: str = None, stream: bool = False) -> 
     
     print(f"Generating ad script using Groq with {model}...")
     
-    # Initialize Groq client
-    client = Groq(api_key=Config.GROQ_API_KEY)
-    
-    if not stream:
-        # Non-streaming mode: get complete response at once
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.6,
-            max_tokens=500,
-            top_p=0.95,
-            stream=False,
-        )
+    try:
+        # Initialize Groq client - avoiding any proxy configuration
+        client = Groq(api_key=Config.GROQ_API_KEY)
         
-        # Extract the ad script from the response
-        ad_script = completion.choices[0].message.content
-        return ad_script
-    else:
-        # Streaming mode: show output as it's generated
-        ad_script = ""
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.6,
-            max_tokens=500,
-            top_p=0.95,
-            stream=True,
-        )
-        
-        print("\nGenerating ad script (streaming):")
-        for chunk in completion:
-            chunk_content = chunk.choices[0].delta.content or ""
-            print(chunk_content, end="", flush=True)
-            ad_script += chunk_content
-        
-        print("\n")
-        return ad_script
+        if not stream:
+            # Non-streaming mode: get complete response at once
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.6,
+                max_tokens=500,
+                top_p=0.95,
+                stream=False,
+            )
+            
+            # Extract the ad script from the response
+            ad_script = completion.choices[0].message.content
+            return ad_script
+        else:
+            # Streaming mode: show output as it's generated
+            ad_script = ""
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.6,
+                max_tokens=500,
+                top_p=0.95,
+                stream=True,
+            )
+            
+            print("\nGenerating ad script (streaming):")
+            for chunk in completion:
+                chunk_content = chunk.choices[0].delta.content or ""
+                print(chunk_content, end="", flush=True)
+                ad_script += chunk_content
+            
+            print("\n")
+            return ad_script
+    except Exception as e:
+        # Print detailed error information
+        print(f"Groq API Error: {str(e)}")
+        raise
