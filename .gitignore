@@ -1,0 +1,42 @@
+# Environment variables
+.env
+
+#reference
+API_DOCMENTATION.md
+FRONTEND_PROMPTS.md
+FRONTEND_VERSIONS.md
+
+
+
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+AdSynth/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Generated output
+generated_ad_*.txt
+scraped_data.json
+llm_prompt.txt
+
+# Logs
+*.log
