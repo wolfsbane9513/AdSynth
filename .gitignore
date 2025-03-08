@@ -2,12 +2,9 @@
 .env
 
 #reference
-API_DOCMENTATION.md
-FRONTEND_PROMPTS.md
+API_DOCUMENTATION.md
+FRONTEND_PROMPT.md
 FRONTEND_VERSIONS.md
-
-
-
 
 # Python cache files
 __pycache__/
