@@ -39,7 +39,7 @@ def generate_ad_script(prompt: str, model: str = None, stream: bool = False) -> 
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.6,
-                max_tokens=500,
+                max_tokens=1000,
                 top_p=0.95,
                 stream=False,
             )
@@ -54,7 +54,7 @@ def generate_ad_script(prompt: str, model: str = None, stream: bool = False) -> 
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.6,
-                max_tokens=500,
+                max_tokens=1000,
                 top_p=0.95,
                 stream=True,
             )

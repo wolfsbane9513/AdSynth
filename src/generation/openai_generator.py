@@ -37,7 +37,7 @@ def generate_ad_script(prompt: str, model: str = None) -> str:
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7,
-        "max_tokens": 500
+        "max_tokens": 1000
     }
     
     response = requests.post(
