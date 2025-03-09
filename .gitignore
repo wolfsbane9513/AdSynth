@@ -40,15 +40,17 @@ AdSynth/
 
 # Generated files
 generated_ad_*.txt
-final_ad_script.txt
+final_ad_script*.txt
 stage*_*.json
 stage*_*.txt
 scraped_data.json
 llm_prompt.txt
-ad_generation_results.json
+ad_generation_results*.json
+runbook_*.md
 
 # Logs
 *.log
+logs/
 
 # OS-specific
 .DS_Store
@@ -63,3 +65,21 @@ Thumbs.db
 .env
 *.pem
 *.key
+secrets/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Large files & datasets
+*.csv
+*.xlsx
+*.parquet
+*.json
+!examples/*.json  # Don't ignore example JSON files in the examples directory
+
+# Debug files
+debug/
+.pytest_cache/

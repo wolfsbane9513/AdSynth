@@ -11,6 +11,7 @@ The AI Ad Generator transforms the ad creation process through:
 3. AI-powered analysis of audience pain points and language
 4. Generation of persuasive ad scripts using advanced language models
 5. Review and refinement of ad content for maximum effectiveness
+6. Production of practical runbooks for executing the ad campaign
 
 ## Features
 
@@ -29,7 +30,23 @@ The AI Ad Generator transforms the ad creation process through:
 - Analysis Agent: Evaluates content relevance and extracts key insights
 - Copywriting Agent: Creates compelling ad scripts based on audience insights
 - Review Agent: Evaluates and refines the ad content
-- **NEW**: Consistent LLM selection across all agents
+
+### Platform-Specific Ad Generation
+- **General**: Standard social media ad script
+- **Instagram**: Optimized for Instagram with hashtags and visual descriptions
+- **YouTube**: Full video script with timing, scenes, and dialogue
+- **TikTok**: Ultra-concise vertical video format
+- **Facebook**: Feed-optimized with headline and engagement focus
+- **Video**: Generic video ad with scenes and visual directions
+- **All**: Generate ads for all platforms at once
+
+### NEW: Production Runbooks
+- Automatically generates platform-specific production guides
+- Detailed step-by-step instructions for creating the final ad
+- Budget considerations for different production levels
+- Technical specifications for each platform
+- Upload instructions and best practices
+- Performance tracking recommendations
 
 ## Setup
 
@@ -90,7 +107,7 @@ Options:
 For a more targeted approach that finds relevant content across multiple subreddits:
 
 ```bash
-python scripts/generate_multi_agent_ad.py --product-info examples/sleepwell_mattress.json --llm-provider groq
+python scripts/generate_multi_agent_ad.py --product-info examples/sleepwell_mattress.json --llm-provider openai
 ```
 
 Options:
@@ -100,18 +117,62 @@ Options:
 - `--output`: Path to save the final results (default: ad_generation_results.json)
 - `--llm-provider`: LLM provider to use across all agents (openai, claude, groq; default: openai)
 - `--model-name`: Specific model name to use (optional, uses default for provider if not specified)
+- `--skip-reddit`: Skip Reddit scraping and rely only on LLM generation
+- `--debug`: Print additional debug information
+- `--no-runbook`: Skip production runbook generation
 
-Examples:
+### Platform-Specific Ads
+
+Generate ad scripts optimized for specific platforms:
+
 ```bash
-# Use OpenAI's GPT-4o model across all agents
-python scripts/generate_multi_agent_ad.py --product-info examples/product.json --llm-provider openai --model-name gpt-4o
+# Generate a YouTube video script with production runbook
+python scripts/generate_multi_agent_ad.py --product-info examples/product.json --platform youtube
 
-# Use Claude for all steps of the process
-python scripts/generate_multi_agent_ad.py --product-info examples/product.json --llm-provider claude
+# Generate an Instagram ad without a runbook
+python scripts/generate_multi_agent_ad.py --product-info examples/product.json --platform instagram --no-runbook
 
-# Use Groq with the Deepseek model
-python scripts/generate_multi_agent_ad.py --product-info examples/product.json --llm-provider groq --model-name deepseek-r1-distill-llama-70b
+# Generate ads for all platforms at once
+python scripts/generate_multi_agent_ad.py --product-info examples/product.json --platform all
 ```
+
+Available platforms:
+- `general`: Standard social media ad script (default)
+- `instagram`: Optimized for Instagram with hashtags and visual descriptions
+- `youtube`: Full video script with timing, scenes, and dialogue
+- `tiktok`: Ultra-concise vertical video format
+- `facebook`: Feed-optimized with headline and engagement focus
+- `video`: Generic video ad with scenes and visual directions
+- `all`: Generate ads for all platforms at once
+
+### Examples
+
+```bash
+# Generate multiple platform-specific ads with Groq model and production runbooks
+python scripts/generate_multi_agent_ad.py --product-info examples/sleepwell_mattress.json --llm-provider groq --platform all
+
+# Interactive mode with YouTube video script
+python scripts/generate_multi_agent_ad.py --interactive --platform youtube
+
+# Skip Reddit scraping for faster results (LLM-only)
+python scripts/generate_multi_agent_ad.py --product-info examples/product.json --skip-reddit --platform instagram
+```
+
+### Using Production Runbooks
+
+When you generate an ad script, a platform-specific production runbook is automatically created (unless disabled with `--no-runbook`). The runbook includes:
+
+1. **Production Steps**: Detailed guidance on creating the final ad
+2. **Technical Specifications**: Platform-specific requirements (dimensions, length, etc.)
+3. **Upload Instructions**: Step-by-step process for publishing the ad
+4. **Budget Considerations**: Cost estimates for different production levels
+5. **Performance Tracking**: Key metrics to monitor for your campaign
+
+To use the runbook:
+1. Find the generated file (e.g., `runbook_youtube_productname.md`)
+2. Follow the step-by-step instructions to turn your script into a professional ad
+3. Use the platform-specific upload instructions to publish your ad
+4. Set up tracking based on the recommended metrics
 
 ### Product Information Format
 
@@ -138,7 +199,8 @@ ai-ad-generator/
 │   ├── generation/           # Ad generation module
 │   ├── utils/                # Utility functions
 │   │   ├── prompt_builder.py # Prompt templates
-│   │   └── json_utils.py     # JSON extraction utilities
+│   │   ├── json_utils.py     # JSON extraction utilities
+│   │   └── runbook_generator.py # Production runbook generator
 │   ├── multi_agent/          # Multi-agent architecture
 │   │   └── orchestrator.py   # Agent orchestration logic
 │   └── config.py             # Configuration and environment loading
@@ -149,37 +211,6 @@ ai-ad-generator/
 └── tests/                    # Tests
 ```
 
-## Development
-
-This project is structured to allow for easy extension and modification:
-
-- Add new LLM providers in the `generation/` module
-- Modify prompt templates in the `utils/prompt_builder.py` file
-- Extend the multi-agent system in the `multi_agent/orchestrator.py` file
-
-### Adding a New LLM Provider
-
-1. Create a new module in `src/generation/`
-2. Implement a `generate_ad_script` function
-3. Update the BaseAgent class in `src/multi_agent/orchestrator.py`
-
-### Creating Custom Product Info Files
-
-For best results, provide detailed information in all fields:
-- `product_name`: Short, recognizable name
-- `product_description`: 1-2 sentences describing key features
-- `use_cases`: Comma-separated list of primary uses
-- `niche`: Industry or category
-- `keywords`: Important terms related to the product
-- `target_audience`: Detailed description of the ideal customer
-- `campaign_goal`: Clear objective for the ad campaign
-
-## Examples
-
-See the `examples/` directory for sample product info files:
-- `sleepwell_mattress.json`: Premium mattress example
-- `focusflow_app.json`: Productivity app example
-
 ## Troubleshooting
 
 ### Common Issues
@@ -188,17 +219,24 @@ See the `examples/` directory for sample product info files:
 - **Subreddit Access Issues**: Some subreddits may return 403 errors if they're private or restricted
 - **LLM Token Limits**: Very large prompts may hit token limits; reduce the number of posts or comments
 - **LLM API Issues**: If you encounter errors with a specific provider, try another or check your API keys
+- **Thinking Tags in Output**: If using Groq, the system will automatically remove thinking tags
 
-### Getting Help
+### Command Line Examples for Common Issues
 
-If you encounter any issues or have questions, please file an issue on the repository.
+```bash
+# If Reddit API is giving issues, skip Reddit and use LLM only
+python scripts/generate_multi_agent_ad.py --product-info examples/product.json --skip-reddit
+
+# If you're having trouble with a specific LLM provider
+python scripts/generate_multi_agent_ad.py --product-info examples/product.json --llm-provider openai
+
+# For debugging issues
+python scripts/generate_multi_agent_ad.py --product-info examples/product.json --debug
+
+# If you don't need production runbooks
+python scripts/generate_multi_agent_ad.py --product-info examples/product.json --no-runbook
+```
 
 ## License
 
 [MIT License](LICENSE)
-
-## Contributors
-
-- @wolfsbane9513
-- @dsaidinesh
-- @Abhiram007G

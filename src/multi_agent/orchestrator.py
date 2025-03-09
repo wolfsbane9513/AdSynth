@@ -742,10 +742,21 @@ class AnalysisAgent(BaseAgent):
 class CopywritingAgent(BaseAgent):
     """Agent responsible for creating the ad script."""
     
-    def generate_ad_script(self, insights: Dict[str, Any], product_info: Dict[str, str]) -> str:
-        """Generate an ad script based on the analysis insights."""
-        prompt = f"""
-        You are an expert copywriter creating a viral social media ad script.
+    def generate_ad_script(self, insights: Dict[str, Any], product_info: Dict[str, str], platform: str = "general") -> str:
+        """
+        Generate an ad script based on the analysis insights.
+        
+        Args:
+            insights (Dict[str, Any]): Dictionary with insights from analysis
+            product_info (Dict[str, str]): Dictionary with product information
+            platform (str): Target platform for the ad script (general, instagram, youtube, video, tiktok, facebook)
+            
+        Returns:
+            str: Generated ad script
+        """
+        # Base prompt with product information and insights
+        base_prompt = f"""
+        You are an expert copywriter creating a viral ad script.
         
         PRODUCT INFORMATION:
         Product Name: {product_info['product_name']}
@@ -761,47 +772,123 @@ class CopywritingAgent(BaseAgent):
         Trending Topics: {', '.join(insights['topics'])}
         
         Key Insights: {insights['insights']}
-        
-        Based on these insights, create a compelling ad script that:
-        1. Addresses the key pain points identified
-        2. Uses language and terminology familiar to the target audience
-        3. Ties into trending topics when relevant
-        4. Clearly communicates the product's value proposition
-        5. Includes a strong call-to-action
-        
-        Your ad script should be 150-200 words and structured for a social media ad:
-        - Attention-grabbing opening
-        - Problem statement
-        - Solution (product introduction)
-        - Benefits
-        - Call-to-action
-        
-        AD SCRIPT:
         """
         
-        # Check if groq is available by trying to import the module
-        groq_available = False
-        try:
-            from src.generation.groq_generator import generate_ad_script as groq_generate
-            groq_available = True
-        except ImportError:
-            groq_available = False
+        # Platform-specific instructions
+        platform_instructions = {
+            "general": """
+            Create a compelling ad script that:
+            1. Addresses the key pain points identified
+            2. Uses language and terminology familiar to the target audience
+            3. Ties into trending topics when relevant
+            4. Clearly communicates the product's value proposition
+            5. Includes a strong call-to-action
             
-        # Use groq if available, otherwise use openai
-        if groq_available and Config.GROQ_API_KEY and self.llm_provider == "groq":
-            try:
-                from src.generation.groq_generator import generate_ad_script as groq_generate
-                ad_script = groq_generate(prompt, model=self.model_name)
-                # Clean any thinking tags or other artifacts
-                ad_script = self._clean_llm_response(ad_script)
-            except Exception as e:
-                print(f"Error with Groq, falling back to OpenAI: {str(e)}")
-                from src.generation.openai_generator import generate_ad_script as openai_generate
-                ad_script = openai_generate(prompt, model="gpt-4o")
-                ad_script = self._clean_llm_response(ad_script)
-        else:
-            # Use the standard generate_llm_response method
-            ad_script = self.generate_llm_response(prompt)
+            Your ad script should be 150-200 words and structured for a social media ad:
+            - Attention-grabbing opening
+            - Problem statement
+            - Solution (product introduction)
+            - Benefits
+            - Call-to-action
+            """,
+            
+            "instagram": """
+            Create an Instagram ad script that:
+            1. Is visually descriptive and engaging
+            2. Uses concise, impactful language
+            3. Incorporates relevant hashtags
+            4. Is optimized for mobile viewing
+            5. Has a strong CTA that works with Instagram's format
+            
+            Your Instagram ad should be 100-150 words max and include:
+            - An attention-grabbing first line that works even when truncated
+            - Short, punchy sentences that maintain interest
+            - Visual descriptions that would pair well with imagery
+            - 3-5 relevant hashtags
+            - A clear call-to-action that directs to link in bio or swipe up
+            """,
+            
+            "youtube": """
+            Create a YouTube video ad script that:
+            1. Hooks viewers in the first 5 seconds
+            2. Maintains engagement throughout
+            3. Incorporates both visual and audio elements
+            4. Builds a narrative around the product
+            5. Ends with a compelling call-to-action
+            
+            Format your script with timing, visual descriptions, and dialogue:
+            [0:00-0:05] - Opening hook
+            [0:05-0:15] - Problem statement
+            [0:15-0:30] - Product introduction
+            [0:30-0:45] - Features and benefits
+            [0:45-0:60] - Testimonial or demonstration
+            [0:60-0:75] - Call-to-action
+            
+            Include both visual directions and spoken dialogue in your script, keeping total length to 60-90 seconds.
+            """,
+            
+            "video": """
+            Create a video ad script that:
+            1. Captures attention in the first 3 seconds
+            2. Tells a compelling visual story
+            3. Demonstrates the product solving a problem
+            4. Uses both on-screen text and dialogue/voiceover
+            5. Ends with a clear call-to-action
+            
+            Format your script with:
+            [SCENE 1] - Description of visuals and setting
+            VOICEOVER: "Dialogue here"
+            ON-SCREEN TEXT: "Text here"
+            
+            [SCENE 2] - Description of visuals and setting
+            VOICEOVER: "Dialogue here"
+            ON-SCREEN TEXT: "Text here"
+            
+            Keep the script to 30-60 seconds total (3-5 scenes).
+            """,
+            
+            "tiktok": """
+            Create a TikTok ad script that:
+            1. Is extremely concise and attention-grabbing
+            2. Uses trendy language and references
+            3. Feels authentic and native to TikTok
+            4. Can incorporate popular TikTok formats (challenges, before/after, etc.)
+            5. Is under 30 seconds when read aloud
+            
+            Format your script with:
+            [VISUAL]: Brief description of what's shown
+            [TEXT]: On-screen text
+            [AUDIO]: Voice or sound description
+            
+            Keep the entire script to 15-30 seconds maximum. The language should be casual, authentic, and speak directly to TikTok users.
+            """,
+            
+            "facebook": """
+            Create a Facebook ad script that:
+            1. Works well in the feed format
+            2. Engages users with questions or relatable statements
+            3. Clearly communicates benefits and value proposition
+            4. Includes social proof or testimonial elements
+            5. Has a clear call-to-action that aligns with Facebook's CTA buttons
+            
+            Your Facebook ad should be structured as:
+            - Headline (attention-grabbing, 5-7 words)
+            - Main ad copy (150-200 words)
+            - Call-to-action (aligned with Facebook options like "Learn More", "Shop Now", etc.)
+            
+            Focus on creating a conversational tone that encourages engagement and sharing.
+            """
+        }
+        
+        # Use general instructions if platform not found
+        if platform not in platform_instructions:
+            platform = "general"
+            
+        # Combine base prompt with platform-specific instructions
+        prompt = f"{base_prompt}\n{platform_instructions[platform]}\n\nAD SCRIPT:"
+        
+        # Use the standard generate_llm_response method
+        ad_script = self.generate_llm_response(prompt)
                 
         return ad_script
 
@@ -809,10 +896,23 @@ class CopywritingAgent(BaseAgent):
 class ReviewAgent(BaseAgent):
     """Agent responsible for reviewing and refining the ad script."""
     
-    def review_ad_script(self, ad_script: str, product_info: Dict[str, str], insights: Dict[str, Any]) -> Dict[str, Any]:
-        """Review the ad script and provide feedback."""
-        prompt = f"""
-        Review this ad script for {product_info['product_name']} and evaluate it based on:
+    def review_ad_script(self, ad_script: str, product_info: Dict[str, str], 
+                         insights: Dict[str, Any], platform: str = "general") -> Dict[str, Any]:
+        """
+        Review the ad script and provide feedback.
+        
+        Args:
+            ad_script (str): The ad script to review
+            product_info (Dict[str, str]): Dictionary with product information
+            insights (Dict[str, Any]): Dictionary with insights from analysis
+            platform (str): Target platform for the ad (general, instagram, youtube, video, tiktok, facebook)
+            
+        Returns:
+            Dict[str, Any]: Dictionary with review feedback and improved script
+        """
+        # Base evaluation criteria
+        base_prompt = f"""
+        Review this {platform} ad script for {product_info['product_name']} and evaluate it based on:
         
         1. Relevance to the product and target audience
         2. Use of audience language and addressing pain points
@@ -828,6 +928,73 @@ class ReviewAgent(BaseAgent):
         
         Pain Points: {', '.join(insights['pain_points'])}
         Audience Language: {', '.join(insights['language'])}
+        """
+        
+        # Platform-specific evaluation criteria
+        platform_criteria = {
+            "general": """
+            Additional evaluation criteria:
+            - Does the ad have a clear structure with an opening, problem, solution, benefits, and CTA?
+            - Is the ad concise yet comprehensive (150-200 words)?
+            - Does it effectively communicate the product's value proposition?
+            """,
+            
+            "instagram": """
+            Additional evaluation criteria for Instagram:
+            - Is the ad visually descriptive, helping users imagine the imagery?
+            - Is it concise enough for Instagram (100-150 words)?
+            - Does it include relevant hashtags?
+            - Is the CTA appropriate for Instagram's format?
+            - Would the opening line work well when truncated in feeds?
+            """,
+            
+            "youtube": """
+            Additional evaluation criteria for YouTube:
+            - Does the script include proper timing indications [0:00-0:05]?
+            - Does it hook viewers in the first 5 seconds?
+            - Is there a clear narrative structure?
+            - Does it include both visual direction and dialogue/voiceover?
+            - Is the length appropriate (60-90 seconds)?
+            - Does the CTA work for a video format?
+            """,
+            
+            "video": """
+            Additional evaluation criteria for video:
+            - Is the script formatted correctly with scenes and visual descriptions?
+            - Does it capture attention in the first 3 seconds?
+            - Is there a clear visual story being told?
+            - Are both visuals and dialogue/voiceover included?
+            - Is the length appropriate (30-60 seconds)?
+            """,
+            
+            "tiktok": """
+            Additional evaluation criteria for TikTok:
+            - Is the ad extremely concise (15-30 seconds when read)?
+            - Does it use authentic, trendy language appropriate for TikTok?
+            - Is it formatted with visual, text, and audio directions?
+            - Does it feel native to the TikTok platform?
+            - Would it be engaging enough for the TikTok audience?
+            """,
+            
+            "facebook": """
+            Additional evaluation criteria for Facebook:
+            - Does it include a compelling headline?
+            - Is the main copy engaging and appropriate length for Facebook?
+            - Does it encourage engagement (comments, shares)?
+            - Is there an element of social proof?
+            - Does the CTA align with Facebook's button options?
+            """
+        }
+        
+        # Use general criteria if platform not found
+        if platform not in platform_criteria:
+            platform = "general"
+            
+        # Final prompt compilation
+        prompt = f"""
+        {base_prompt}
+        
+        {platform_criteria[platform]}
         
         AD SCRIPT:
         {ad_script}
@@ -838,6 +1005,7 @@ class ReviewAgent(BaseAgent):
             "strengths": [list of 2-3 strengths],
             "weaknesses": [list of 2-3 areas for improvement],
             "suggestions": [list of 2-3 specific suggestions],
+            "platform_specific_feedback": "Feedback specific to the {platform} platform",
             "improved_script": "An improved version of the script incorporating your suggestions"
         }}
         """
@@ -851,12 +1019,16 @@ class ReviewAgent(BaseAgent):
             "strengths": ["Generally on target"],
             "weaknesses": ["Could be more specific"],
             "suggestions": ["Review original script"],
+            "platform_specific_feedback": f"Consider optimizing further for {platform} format",
             "improved_script": ad_script
         })
         
         # If no improved script is provided, use the original
         if "improved_script" not in review or not review["improved_script"]:
             review["improved_script"] = ad_script
+            
+        # Add platform information
+        review["platform"] = platform
             
         return review
 
@@ -888,13 +1060,16 @@ class AdGeneratorOrchestrator:
         self.copywriting_agent = CopywritingAgent(llm_provider=llm_provider, model_name=model_name)
         self.review_agent = ReviewAgent(llm_provider=llm_provider, model_name=model_name)
     
-    def generate_ad(self, product_info: Dict[str, str], save_intermediates: bool = False, skip_reddit: bool = False) -> Dict[str, Any]:
+    def generate_ad(self, product_info: Dict[str, str], save_intermediates: bool = False, 
+                skip_reddit: bool = False, platform: str = "general", generate_runbook: bool = True) -> Dict[str, Any]:
         """Generate an ad script using the multi-agent approach.
         
         Args:
             product_info (Dict[str, str]): Dictionary with product information
             save_intermediates (bool): Whether to save intermediate results to files
             skip_reddit (bool): Whether to skip Reddit scraping and rely only on LLM
+            platform (str): Target platform for the ad (general, instagram, youtube, video, tiktok, facebook)
+            generate_runbook (bool): Whether to generate a production and upload runbook
             
         Returns:
             Dict[str, Any]: Dictionary with results from each stage and final ad script
@@ -905,7 +1080,8 @@ class AdGeneratorOrchestrator:
             "configuration": {
                 "llm_provider": self.llm_provider,
                 "model_name": self.model_name,
-                "skip_reddit": skip_reddit
+                "skip_reddit": skip_reddit,
+                "platform": platform
             }
         }
         
@@ -918,7 +1094,7 @@ class AdGeneratorOrchestrator:
             "queries": queries
         }
         if save_intermediates:
-            with open("stage1_research.json", "w", encoding="utf-8") as f:
+            with open(f"stage1_research_{platform}.json", "w", encoding="utf-8") as f:
                 json.dump(results["stages"]["research"], f, indent=2)
         
         # Stage 2: Data Collection (if not skipping Reddit)
@@ -930,7 +1106,7 @@ class AdGeneratorOrchestrator:
                 "posts_count": len(posts_data)
             }
             if save_intermediates and posts_data:
-                with open("stage2_raw_data.json", "w", encoding="utf-8") as f:
+                with open(f"stage2_raw_data_{platform}.json", "w", encoding="utf-8") as f:
                     json.dump(posts_data, f, indent=2, ensure_ascii=False)
         else:
             print("\n=== Stage 2: Data Collection (SKIPPED) ===")
@@ -953,30 +1129,61 @@ class AdGeneratorOrchestrator:
             
         results["stages"]["analysis"] = insights
         if save_intermediates:
-            with open("stage3_analysis.json", "w", encoding="utf-8") as f:
+            with open(f"stage3_analysis_{platform}.json", "w", encoding="utf-8") as f:
                 json.dump(insights, f, indent=2)
         
         # Stage 4: Copywriting
-        print(f"\n=== Stage 4: Copywriting ({self.llm_provider}) ===")
-        ad_script = self.copywriting_agent.generate_ad_script(insights, product_info)
+        print(f"\n=== Stage 4: Copywriting ({self.llm_provider}) for {platform.capitalize()} ===")
+        ad_script = self.copywriting_agent.generate_ad_script(insights, product_info, platform=platform)
         results["stages"]["copywriting"] = {
-            "original_script": ad_script
+            "original_script": ad_script,
+            "platform": platform
         }
         if save_intermediates:
-            with open("stage4_original_script.txt", "w", encoding="utf-8") as f:
+            with open(f"stage4_original_script_{platform}.txt", "w", encoding="utf-8") as f:
                 f.write(ad_script)
         
         # Stage 5: Review
         print(f"\n=== Stage 5: Review ({self.llm_provider}) ===")
-        review = self.review_agent.review_ad_script(ad_script, product_info, insights)
+        review = self.review_agent.review_ad_script(ad_script, product_info, insights, platform=platform)
         results["stages"]["review"] = review
         if save_intermediates:
-            with open("stage5_review.json", "w", encoding="utf-8") as f:
+            with open(f"stage5_review_{platform}.json", "w", encoding="utf-8") as f:
                 json.dump(review, f, indent=2)
         
         # Final result
         results["final_ad_script"] = review.get("improved_script", ad_script)
-        with open("final_ad_script.txt", "w", encoding="utf-8") as f:
+        results["platform"] = platform
+        
+        with open(f"final_ad_script_{platform}.txt", "w", encoding="utf-8") as f:
             f.write(results["final_ad_script"])
+        
+        # Stage 6: Runbook Generation (optional)
+        if generate_runbook:
+            print(f"\n=== Stage 6: Runbook Generation ===")
+            try:
+                from src.utils.runbook_generator import save_runbook
+                runbook_path = save_runbook(
+                    platform=platform,
+                    ad_script=results["final_ad_script"],
+                    product_info=product_info,
+                    output_path=f"runbook_{platform}_{product_info['product_name'].replace(' ', '_').lower()}.md"
+                )
+                results["runbook"] = {
+                    "generated": True,
+                    "path": runbook_path
+                }
+                print(f"Production runbook generated: {runbook_path}")
+            except Exception as e:
+                print(f"Error generating runbook: {str(e)}")
+                results["runbook"] = {
+                    "generated": False,
+                    "error": str(e)
+                }
+        else:
+            results["runbook"] = {
+                "generated": False,
+                "reason": "Runbook generation disabled"
+            }
         
         return results

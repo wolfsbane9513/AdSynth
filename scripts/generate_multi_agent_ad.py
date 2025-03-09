@@ -72,6 +72,20 @@ def parse_args() -> argparse.Namespace:
         help="Print additional debug information"
     )
     
+    parser.add_argument(
+        "--platform",
+        type=str,
+        choices=["general", "instagram", "youtube", "video", "tiktok", "facebook", "all"],
+        default="general",
+        help="Target platform for the ad (default: general)"
+    )
+    
+    parser.add_argument(
+        "--no-runbook",
+        action="store_true",
+        help="Skip production runbook generation"
+    )
+    
     return parser.parse_args()
 
 def interactive_product_info() -> Dict[str, str]:
@@ -186,21 +200,65 @@ def main() -> None:
     # Generate ad using multi-agent approach
     try:
         print("\nStarting multi-agent ad generation process...")
-        results = orchestrator.generate_ad(
-            product_info, 
-            save_intermediates=args.save_intermediates,
-            skip_reddit=args.skip_reddit
-        )
         
-        # Save final results
-        with open(args.output, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
-        
-        print(f"\nAd generation complete! Results saved to {args.output}")
-        print("\nFinal Ad Script:")
-        print("-" * 60)
-        print(results["final_ad_script"])
-        print("-" * 60)
+        if args.platform == "all":
+            print("\nGenerating ads for all platforms...")
+            platforms = ["general", "instagram", "youtube", "video", "tiktok", "facebook"]
+            all_results = {}
+            
+            for platform in platforms:
+                print(f"\n=== Generating {platform.capitalize()} Ad ===")
+                platform_results = orchestrator.generate_ad(
+                    product_info, 
+                    save_intermediates=args.save_intermediates,
+                    skip_reddit=args.skip_reddit,
+                    platform=platform,
+                    generate_runbook=not args.no_runbook
+                )
+                all_results[platform] = platform_results
+                
+                # Save platform-specific ad script
+                with open(f"final_ad_script_{platform}.txt", "w", encoding="utf-8") as f:
+                    f.write(platform_results["final_ad_script"])
+                    
+                print(f"\n{platform.capitalize()} Ad Script:")
+                print("-" * 60)
+                print(platform_results["final_ad_script"])
+                print("-" * 60)
+                
+                # Display runbook information if generated
+                if not args.no_runbook and platform_results.get("runbook", {}).get("generated", False):
+                    print(f"Production runbook saved to: {platform_results['runbook']['path']}")
+            
+            # Save combined results
+            with open(args.output, "w", encoding="utf-8") as f:
+                json.dump(all_results, f, indent=2, ensure_ascii=False)
+                
+            print(f"\nAll ad generation complete! Results saved to {args.output}")
+        else:
+            # Generate a single ad for the specified platform
+            results = orchestrator.generate_ad(
+                product_info, 
+                save_intermediates=args.save_intermediates,
+                skip_reddit=args.skip_reddit,
+                platform=args.platform,
+                generate_runbook=not args.no_runbook
+            )
+            
+            # Save final results
+            with open(args.output, "w", encoding="utf-8") as f:
+                json.dump(results, f, indent=2, ensure_ascii=False)
+            
+            print(f"\nAd generation complete! Results saved to {args.output}")
+            print(f"\n{args.platform.capitalize()} Ad Script:")
+            print("-" * 60)
+            print(results["final_ad_script"])
+            print("-" * 60)
+            
+            # Display runbook information if generated
+            if not args.no_runbook and results.get("runbook", {}).get("generated", False):
+                print(f"Production runbook saved to: {results['runbook']['path']}")
+                print("Follow the instructions in the runbook to produce and upload your ad.")
         
     except Exception as e:
         print(f"Error during ad generation: {str(e)}")
