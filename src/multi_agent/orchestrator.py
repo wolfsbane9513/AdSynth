@@ -1061,19 +1061,29 @@ class AdGeneratorOrchestrator:
         self.review_agent = ReviewAgent(llm_provider=llm_provider, model_name=model_name)
     
     def generate_ad(self, product_info: Dict[str, str], save_intermediates: bool = False, 
-                skip_reddit: bool = False, platform: str = "general", generate_runbook: bool = True) -> Dict[str, Any]:
+                    skip_reddit: bool = False, platform: str = "general", generate_runbook: bool = True) -> Dict[str, Any]:
         """Generate an ad script using the multi-agent approach.
         
         Args:
             product_info (Dict[str, str]): Dictionary with product information
             save_intermediates (bool): Whether to save intermediate results to files
             skip_reddit (bool): Whether to skip Reddit scraping and rely only on LLM
-            platform (str): Target platform for the ad (general, instagram, youtube, video, tiktok, facebook)
+            platform (str): Target platform for the ad (general, instagram, youtube, video, tiktok, facebook, all)
             generate_runbook (bool): Whether to generate a production and upload runbook
             
         Returns:
             Dict[str, Any]: Dictionary with results from each stage and final ad script
         """
+        # Check if the user wants to generate ads for all platforms
+        if platform.lower() == "all":
+            return self.generate_ads_for_all_platforms(
+                product_info=product_info,
+                save_intermediates=save_intermediates,
+                skip_reddit=skip_reddit,
+                generate_runbook=generate_runbook
+            )
+        
+        # Original implementation for a single platform
         results = {
             "product_info": product_info,
             "stages": {},
@@ -1187,3 +1197,151 @@ class AdGeneratorOrchestrator:
             }
         
         return results
+    
+    def generate_ads_for_all_platforms(self, product_info: Dict[str, str], save_intermediates: bool = False,
+                                     skip_reddit: bool = False, generate_runbook: bool = True) -> Dict[str, Any]:
+        """Generate ad scripts for all supported platforms using the multi-agent approach.
+        Optimized to perform Reddit scraping only once.
+        
+        Args:
+            product_info (Dict[str, str]): Dictionary with product information
+            save_intermediates (bool): Whether to save intermediate results to files
+            skip_reddit (bool): Whether to skip Reddit scraping and rely only on LLM
+            generate_runbook (bool): Whether to generate production and upload runbooks
+            
+        Returns:
+            Dict[str, Any]: Dictionary with results for each platform
+        """
+        # Define all supported platforms
+        platforms = ["general", "instagram", "youtube", "tiktok", "facebook", "video"]
+        
+        # Container for all results
+        all_results = {
+            "product_info": product_info,
+            "platforms": {},
+            "configuration": {
+                "llm_provider": self.llm_provider,
+                "model_name": self.model_name,
+                "skip_reddit": skip_reddit
+            }
+        }
+        
+        # Perform platform-agnostic operations once
+        
+        # Stage 1: Research (common for all platforms)
+        print(f"\n=== Stage 1: Research ({self.llm_provider}) ===")
+        subreddits = self.research_agent.find_relevant_subreddits(product_info)
+        queries = self.research_agent.generate_search_queries(product_info)
+        research_results = {
+            "subreddits": subreddits,
+            "queries": queries
+        }
+        if save_intermediates:
+            with open(f"stage1_research_all_platforms.json", "w", encoding="utf-8") as f:
+                json.dump(research_results, f, indent=2)
+        
+        # Stage 2: Data Collection (if not skipping Reddit, common for all platforms)
+        posts_data = []
+        if not skip_reddit:
+            print("\n=== Stage 2: Data Collection ===")
+            posts_data = self.data_collection_agent.collect_data(subreddits, queries)
+            data_collection_results = {
+                "posts_count": len(posts_data)
+            }
+            if save_intermediates and posts_data:
+                with open(f"stage2_raw_data_all_platforms.json", "w", encoding="utf-8") as f:
+                    json.dump(posts_data, f, indent=2, ensure_ascii=False)
+        else:
+            print("\n=== Stage 2: Data Collection (SKIPPED) ===")
+            data_collection_results = {
+                "posts_count": 0,
+                "skipped": True
+            }
+        
+        # Stage 3: Analysis (common for all platforms)
+        print(f"\n=== Stage 3: Analysis ({self.llm_provider}) ===")
+        
+        # If we have posts, analyze them; otherwise, synthesize insights directly
+        if posts_data:
+            relevant_posts = self.analysis_agent.filter_posts_by_relevance(posts_data, product_info)
+            insights = self.analysis_agent.extract_key_insights(relevant_posts, product_info)
+        else:
+            # No Reddit data, so generate insights directly from product info
+            print("No Reddit data available. Generating insights directly...")
+            insights = self.analysis_agent.synthesize_insights_without_data(product_info)
+            
+        if save_intermediates:
+            with open(f"stage3_analysis_all_platforms.json", "w", encoding="utf-8") as f:
+                json.dump(insights, f, indent=2)
+        
+        # Now generate platform-specific content for each platform
+        for platform in platforms:
+            print(f"\n=== Generating content for {platform.capitalize()} ===")
+            
+            # Create a platform-specific results container
+            platform_results = {
+                "stages": {
+                    "research": research_results,
+                    "data_collection": data_collection_results,
+                    "analysis": insights
+                }
+            }
+            
+            # Stage 4: Copywriting (platform-specific)
+            print(f"\n=== Stage 4: Copywriting ({self.llm_provider}) for {platform.capitalize()} ===")
+            ad_script = self.copywriting_agent.generate_ad_script(insights, product_info, platform=platform)
+            platform_results["stages"]["copywriting"] = {
+                "original_script": ad_script,
+                "platform": platform
+            }
+            if save_intermediates:
+                with open(f"stage4_original_script_{platform}.txt", "w", encoding="utf-8") as f:
+                    f.write(ad_script)
+            
+            # Stage 5: Review (platform-specific)
+            print(f"\n=== Stage 5: Review ({self.llm_provider}) for {platform.capitalize()} ===")
+            review = self.review_agent.review_ad_script(ad_script, product_info, insights, platform=platform)
+            platform_results["stages"]["review"] = review
+            if save_intermediates:
+                with open(f"stage5_review_{platform}.json", "w", encoding="utf-8") as f:
+                    json.dump(review, f, indent=2)
+            
+            # Final result for this platform
+            platform_results["final_ad_script"] = review.get("improved_script", ad_script)
+            platform_results["platform"] = platform
+            
+            with open(f"final_ad_script_{platform}.txt", "w", encoding="utf-8") as f:
+                f.write(platform_results["final_ad_script"])
+            
+            # Stage 6: Runbook Generation (optional, platform-specific)
+            if generate_runbook:
+                print(f"\n=== Stage 6: Runbook Generation for {platform.capitalize()} ===")
+                try:
+                    from src.utils.runbook_generator import save_runbook
+                    runbook_path = save_runbook(
+                        platform=platform,
+                        ad_script=platform_results["final_ad_script"],
+                        product_info=product_info,
+                        output_path=f"runbook_{platform}_{product_info['product_name'].replace(' ', '_').lower()}.md"
+                    )
+                    platform_results["runbook"] = {
+                        "generated": True,
+                        "path": runbook_path
+                    }
+                    print(f"Production runbook generated: {runbook_path}")
+                except Exception as e:
+                    print(f"Error generating runbook: {str(e)}")
+                    platform_results["runbook"] = {
+                        "generated": False,
+                        "error": str(e)
+                    }
+            else:
+                platform_results["runbook"] = {
+                    "generated": False,
+                    "reason": "Runbook generation disabled"
+                }
+            
+            # Add this platform's results to the overall results
+            all_results["platforms"][platform] = platform_results
+        
+        return all_results
