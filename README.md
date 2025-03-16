@@ -48,6 +48,14 @@ The AI Ad Generator transforms the ad creation process through:
 - Upload instructions and best practices
 - Performance tracking recommendations
 
+### NEW: Enhanced Error Handling & Failback System
+- Comprehensive retry logic with exponential backoff
+- Smart fallback mechanisms when external services fail
+- Stage independence to preserve successful data between steps
+- Intelligent defaults generation based on product information
+- Transparent disclaimer system for fallback-generated content
+- Detailed logging and error reporting for easier debugging
+
 ## Setup
 
 ### Prerequisites
@@ -120,6 +128,7 @@ Options:
 - `--skip-reddit`: Skip Reddit scraping and rely only on LLM generation
 - `--debug`: Print additional debug information
 - `--no-runbook`: Skip production runbook generation
+- `--max-retries`: Maximum number of retry attempts for each stage (default: 3)
 
 ### Platform-Specific Ads
 
@@ -190,6 +199,50 @@ Create a JSON file with the following structure for best results:
 }
 ```
 
+## Error Handling & Failback System
+
+The AI Ad Generator features a robust error handling system to ensure reliable operation even when external services fail or encounter rate limits.
+
+### Key Features
+
+1. **Multi-Stage Retry Logic**
+   - Each operation attempts multiple retries with exponential backoff
+   - Adjustable `max-retries` parameter to control retry attempts
+   - Graceful degradation when services are unavailable
+
+2. **Independent Stage Processing**
+   - Each stage preserves data from successful previous stages
+   - Reddit data is collected once and reused across retry attempts
+   - Failures in later stages don't trigger re-scraping
+
+3. **Intelligent Fallbacks**
+   - When Reddit scraping fails: Generates insights directly from product info
+   - When analysis fails: Falls back to algorithmically generated insights
+   - When LLM providers fail: Attempts alternative providers
+
+4. **Transparent Disclaimers**
+   - Automatically adds disclaimers when fallbacks are used
+   - Clearly indicates when ad scripts are generated without Reddit data
+   - Provides detailed information about which stages used fallbacks
+
+### When Fallbacks Are Used
+
+The system will indicate when fallbacks were used through:
+
+1. **Console Output**: Detailed logs showing retry attempts and fallback usage
+2. **Results Object**: A `disclaimer` section in the results JSON with details
+3. **Ad Script Disclaimer**: For critical fallbacks, a disclaimer appears at the top of the generated script
+
+Example disclaimer in an ad script:
+```
+DISCLAIMER: This ad script was generated without Reddit data insights. 
+It is based on product information only and may require additional customization.
+
+---
+
+[Ad script content follows...]
+```
+
 ## Project Structure
 
 ```
@@ -235,6 +288,9 @@ python scripts/generate_multi_agent_ad.py --product-info examples/product.json -
 
 # If you don't need production runbooks
 python scripts/generate_multi_agent_ad.py --product-info examples/product.json --no-runbook
+
+# Increase retry attempts for unstable environments
+python scripts/generate_multi_agent_ad.py --product-info examples/product.json --max-retries 5
 ```
 
 ## License

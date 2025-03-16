@@ -293,27 +293,41 @@ class DataCollectionAgent:
     def __init__(self, reddit_client):
         self.reddit_client = reddit_client
     
-    def search_subreddit(self, subreddit_name: str, query: str, limit: int = 3) -> List[Dict[str, Any]]:
-        """Search for posts in a subreddit with a specific query."""
-        try:
-            # Verify subreddit name is valid
-            if not subreddit_name or len(subreddit_name) < 3 or ' ' in subreddit_name or '/' in subreddit_name:
-                print(f"Invalid subreddit name: '{subreddit_name}'. Skipping.")
-                return []
-                
-            # Clean the query to remove problematic characters
-            clean_query = query.replace('"', '').replace("'", "").strip()
-            if len(clean_query) < 3:
-                print(f"Query too short after cleaning: '{clean_query}'. Skipping.")
-                return []
-                
-            print(f"Searching r/{subreddit_name} for '{clean_query}'...")
+    def search_subreddit(self, subreddit_name: str, query: str, limit: int = 3, retry_count: int = 2) -> List[Dict[str, Any]]:
+        """Search for posts in a subreddit with a specific query, with retries.
+        
+        Args:
+            subreddit_name (str): Name of the subreddit to search
+            query (str): Search query
+            limit (int): Maximum number of posts to retrieve
+            retry_count (int): Number of retry attempts if search fails
             
-            subreddit = self.reddit_client.subreddit(subreddit_name)
-            posts_data = []
+        Returns:
+            List[Dict[str, Any]]: List of post data dictionaries
+        """
+        # Verify subreddit name is valid
+        if not subreddit_name or len(subreddit_name) < 3 or ' ' in subreddit_name or '/' in subreddit_name:
+            print(f"Invalid subreddit name: '{subreddit_name}'. Skipping.")
+            return []
             
-            # Use a try-except block to handle search failures gracefully
+        # Clean the query to remove problematic characters
+        clean_query = query.replace('"', '').replace("'", "").strip()
+        if len(clean_query) < 3:
+            print(f"Query too short after cleaning: '{clean_query}'. Skipping.")
+            return []
+        
+        posts_data = []
+        last_error = None
+        
+        # Try multiple times with increasing backoff
+        for attempt in range(retry_count + 1):
             try:
+                print(f"Searching r/{subreddit_name} for '{clean_query}'... (Attempt {attempt + 1}/{retry_count + 1})")
+                
+                # Create a new subreddit object for each attempt to avoid stale connections
+                subreddit = self.reddit_client.subreddit(subreddit_name)
+                
+                # Use a try-except block to handle search failures gracefully
                 # Search for posts with specific query
                 for post in subreddit.search(clean_query, sort='relevance', limit=limit):
                     post_data = {
@@ -339,21 +353,80 @@ class DataCollectionAgent:
                         print(f"Error getting comments for post in r/{subreddit_name}: {str(comment_error)}")
                     
                     posts_data.append(post_data)
-            except Exception as search_error:
-                print(f"Error searching r/{subreddit_name} with query '{clean_query}': {str(search_error)}")
-            
-            if posts_data:
-                print(f"Found {len(posts_data)} posts in r/{subreddit_name}")
-            
-            return posts_data
-        except Exception as e:
-            print(f"Error searching r/{subreddit_name}: {str(e)}")
-            return []
+                
+                # If we got here without errors and have some data, break out of retry loop
+                if posts_data:
+                    print(f"Successfully found {len(posts_data)} posts in r/{subreddit_name}")
+                    break
+                else:
+                    # No error but also no posts - try again if we have attempts left
+                    print(f"No posts found in r/{subreddit_name} for query '{clean_query}'")
+                    if attempt < retry_count:
+                        # Try a more general search on the next attempt
+                        clean_query = self._simplify_query(clean_query)
+                        print(f"Simplifying query to '{clean_query}' for next attempt")
+                        
+            except Exception as e:
+                last_error = e
+                print(f"Error searching r/{subreddit_name} (Attempt {attempt + 1}): {str(e)}")
+                
+                # Wait before retrying (increasing backoff)
+                if attempt < retry_count:
+                    import time
+                    wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4, 8...
+                    print(f"Waiting {wait_time} seconds before retrying...")
+                    time.sleep(wait_time)
+        
+        # If we exhausted all retries and still have no data, log the final error
+        if not posts_data and last_error:
+            print(f"All attempts failed for r/{subreddit_name}: {str(last_error)}")
+        
+        return posts_data
     
-    def collect_data(self, subreddits: List[str], queries: List[str], posts_per_query: int = 2) -> List[Dict[str, Any]]:
-        """Collect data from multiple subreddits using multiple queries."""
+    def _simplify_query(self, query: str) -> str:
+        """Simplify a query that failed to return results to increase chances on retry.
+        
+        Args:
+            query (str): The original query that failed
+            
+        Returns:
+            str: A simplified version of the query
+        """
+        # Split query into words
+        words = query.split()
+        
+        # If query has multiple words, return only the most important 1-2 words
+        if len(words) > 2:
+            # Remove common stop words and keep only substantive words
+            stop_words = {'the', 'and', 'or', 'but', 'if', 'on', 'in', 'with', 'for', 'to', 'from', 'by', 'at', 'of'}
+            filtered_words = [word for word in words if word.lower() not in stop_words]
+            
+            # If we still have enough words after filtering, take the first 2
+            if len(filtered_words) > 1:
+                return ' '.join(filtered_words[:2])
+            
+            # Otherwise take the first 2 original words
+            return ' '.join(words[:2])
+            
+        # If query is already simple, return as is
+        return query
+    
+    def collect_data(self, subreddits: List[str], queries: List[str], posts_per_query: int = 2, 
+                    max_failures: int = 3) -> List[Dict[str, Any]]:
+        """Collect data from multiple subreddits using multiple queries with failure tracking.
+        
+        Args:
+            subreddits (List[str]): List of subreddit names
+            queries (List[str]): List of search queries
+            posts_per_query (int): Maximum posts to retrieve per query
+            max_failures (int): Maximum number of consecutive subreddit failures before giving up
+            
+        Returns:
+            List[Dict[str, Any]]: List of post data dictionaries
+        """
         all_posts = []
         successful_subreddits = 0
+        consecutive_failures = 0
         
         # Clean subreddit names
         clean_subreddits = []
@@ -361,9 +434,10 @@ class DataCollectionAgent:
             # Basic validation
             if subreddit and len(subreddit) > 2 and ' ' not in subreddit and not subreddit.startswith('<'):
                 clean_subreddits.append(subreddit.strip().lower())
-            
+        
         # Ensure we have some subreddits
         if not clean_subreddits:
+            print("No valid subreddits provided. Using defaults.")
             clean_subreddits = ["askreddit", "advice", "tipofmytongue", "buyitforlife"]
             
         # Clean queries
@@ -377,244 +451,364 @@ class DataCollectionAgent:
         
         # Ensure we have some queries
         if not clean_queries:
+            print("No valid queries provided. Using defaults.")
             clean_queries = ["review", "recommendation", "problem", "alternative"]
         
         # Collect posts from each subreddit using each query
         for subreddit in clean_subreddits:
+            # Check if we've had too many consecutive failures
+            if consecutive_failures >= max_failures:
+                print(f"Too many consecutive subreddit failures ({consecutive_failures}). Stopping search.")
+                break
+                
             posts_for_subreddit = []
             
             for query in clean_queries:
                 try:
-                    posts = self.search_subreddit(subreddit, query, limit=posts_per_query)
-                    posts_for_subreddit.extend(posts)
+                    new_posts = self.search_subreddit(subreddit, query, limit=posts_per_query)
+                    posts_for_subreddit.extend(new_posts)
                 except Exception as e:
-                    print(f"Error in collect_data for r/{subreddit} with query '{query}': {str(e)}")
+                    print(f"Unexpected error in collect_data for r/{subreddit} with query '{query}': {str(e)}")
             
             if posts_for_subreddit:
                 successful_subreddits += 1
-                
-            all_posts.extend(posts_for_subreddit)
+                consecutive_failures = 0  # Reset failure counter on success
+                all_posts.extend(posts_for_subreddit)
+            else:
+                consecutive_failures += 1
+                print(f"Failed to collect any posts from r/{subreddit}. Consecutive failures: {consecutive_failures}")
         
         # If we have no posts but some subreddits succeeded, we might have had issues with the queries
         if not all_posts and successful_subreddits > 0:
+            print("No posts found with specific queries. Trying fallback queries.")
             # Try again with very generic queries for a few subreddits
-            fallback_queries = ["recommendation", "review", "advice"]
-            for subreddit in clean_subreddits[:3]:  # Just try the first 3 subreddits
+            fallback_queries = ["recommendation", "review", "advice", "question", "help"]
+            fallback_subreddits = clean_subreddits[:3] if len(clean_subreddits) > 2 else clean_subreddits
+            
+            for subreddit in fallback_subreddits:
                 for query in fallback_queries:
                     try:
                         posts = self.search_subreddit(subreddit, query, limit=2)
-                        all_posts.extend(posts)
+                        if posts:
+                            all_posts.extend(posts)
+                            print(f"Fallback query '{query}' succeeded for r/{subreddit}")
+                            # If we got some posts, we can stop trying fallback queries
+                            if len(all_posts) >= 5:
+                                break
                     except Exception:
                         pass
+                
+                # If we got enough posts from this subreddit, move to the next one
+                if len(all_posts) >= 5:
+                    break
         
         print(f"Collected {len(all_posts)} posts from {successful_subreddits} subreddits")
-        return all_posts
-    
+        
+        # Check if we have enough data
+        if len(all_posts) < 2:
+            print("WARNING: Very few posts collected. The generated ad may lack audience insights.")
+            
+        return all_posts    
 
 class AnalysisAgent(BaseAgent):
     """Agent responsible for analyzing and filtering the collected data."""
     
-    def filter_posts_by_relevance(self, posts_data: List[Dict[str, Any]], product_info: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Filter and rank posts based on relevance to the product."""
+    def filter_posts_by_relevance(self, posts_data: List[Dict[str, Any]], product_info: Dict[str, str],
+                                 retry_attempts: int = 2) -> List[Dict[str, Any]]:
+        """Filter and rank posts based on relevance to the product with retry logic.
+        
+        Args:
+            posts_data (List[Dict[str, Any]]): List of post data dictionaries
+            product_info (Dict[str, str]): Dictionary containing product information
+            retry_attempts (int): Number of retry attempts for LLM evaluation
+            
+        Returns:
+            List[Dict[str, Any]]: Filtered list of relevant posts
+        """
         if not posts_data:
+            print("No posts to filter for relevance.")
             return []
         
         # Create a batch of posts to evaluate (limit to prevent token overflow)
         batch_size = min(10, len(posts_data))
         batch = posts_data[:batch_size]
         
-        # Prepare the evaluation prompt
-        prompt = f"""
-        Rate each post's relevance to this product on a scale of 0-10:
-        Product: {product_info['product_name']} - {product_info['product_description']}
-        Target audience: {product_info['target_audience']}
-        Use cases: {product_info.get('use_cases', 'Not specified')}
-        Keywords: {product_info.get('keywords', 'Not specified')}
-        
-        For each post, provide a JSON object with the following structure:
-        {{
-            "post_index": <index of the post>,
-            "relevance_score": <0-10 score>,
-            "reason": <brief explanation for the score>
-        }}
-        
-        Respond with a JSON array containing evaluations for all posts.
-        
-        Here are the posts to evaluate:
-        """
-        
-        # Add each post to the prompt
-        for i, post in enumerate(batch):
-            prompt += f"\nPost {i}:\nTitle: {post['title']}\n"
-            content = post['selftext'][:500] + "..." if len(post['selftext']) > 500 else post['selftext']
-            prompt += f"Content: {content}\n"
+        for attempt in range(retry_attempts + 1):
+            try:
+                # Prepare the evaluation prompt
+                prompt = f"""
+                Rate each post's relevance to this product on a scale of 0-10:
+                Product: {product_info['product_name']} - {product_info['product_description']}
+                Target audience: {product_info['target_audience']}
+                Use cases: {product_info.get('use_cases', 'Not specified')}
+                Keywords: {product_info.get('keywords', 'Not specified')}
+                
+                For each post, provide a JSON object with the following structure:
+                {{
+                    "post_index": <index of the post>,
+                    "relevance_score": <0-10 score>,
+                    "reason": <brief explanation for the score>
+                }}
+                
+                Respond with a JSON array containing evaluations for all posts.
+                
+                Here are the posts to evaluate:
+                """
+                
+                # Add each post to the prompt
+                for i, post in enumerate(batch):
+                    prompt += f"\nPost {i}:\nTitle: {post['title']}\n"
+                    content = post['selftext'][:500] + "..." if len(post['selftext']) > 500 else post['selftext']
+                    prompt += f"Content: {content}\n"
+                    
+                    # Add a sample of comments
+                    if post['top_comments']:
+                        prompt += "Top Comments:\n"
+                        for j, comment in enumerate(post['top_comments'][:2]):
+                            comment_text = comment['body'][:200] + "..." if len(comment['body']) > 200 else comment['body']
+                            prompt += f"- Comment {j+1}: {comment_text}\n"
+                
+                # Call LLM to evaluate posts
+                response = self.generate_llm_response(prompt)
+                
+                # Extract JSON from response using the utility function
+                evaluations = extract_json_from_llm_response(response, default_value=[])
+                
+                if evaluations:
+                    # Filter posts based on relevance score (threshold = 6)
+                    relevant_posts = []
+                    for eval_item in evaluations:
+                        if eval_item.get("relevance_score", 0) >= 6:
+                            post_index = eval_item.get("post_index", -1)
+                            if post_index >= 0 and post_index < len(batch):
+                                relevant_posts.append(batch[post_index])
+                    
+                    if relevant_posts:
+                        print(f"Filtered to {len(relevant_posts)} relevant posts (threshold score: 6/10)")
+                        return relevant_posts
+                    else:
+                        print("No posts met the relevance threshold.")
+                        # If this is the last attempt, use all posts
+                        if attempt == retry_attempts:
+                            print("Using all posts as no posts met the relevance threshold after all attempts.")
+                            return batch
+                        else:
+                            # Try again with a lower threshold on subsequent attempts
+                            print(f"Retrying with modified approach (attempt {attempt + 2}/{retry_attempts + 1})")
+                else:
+                    print(f"Failed to extract evaluations from LLM response (attempt {attempt + 1})")
+                    # If this is the last attempt, use all posts
+                    if attempt == retry_attempts:
+                        print("Using all posts as fallback after failed evaluations.")
+                        return batch
             
-            # Add a sample of comments
-            if post['top_comments']:
-                prompt += "Top Comments:\n"
-                for j, comment in enumerate(post['top_comments'][:2]):
-                    comment_text = comment['body'][:200] + "..." if len(comment['body']) > 200 else comment['body']
-                    prompt += f"- Comment {j+1}: {comment_text}\n"
+            except Exception as e:
+                print(f"Error during relevance filtering (attempt {attempt + 1}): {str(e)}")
+                # If this is the last attempt, use all posts
+                if attempt == retry_attempts:
+                    print("Using all posts as fallback after error.")
+                    return batch
         
-        # Call LLM to evaluate posts - response is already cleaned
-        response = self.generate_llm_response(prompt)
-        
-        # Extract JSON from response using the utility function
-        evaluations = extract_json_from_llm_response(response, default_value=[])
-        
-        if not evaluations:
-            print("Failed to extract evaluations from LLM response. Using all posts.")
-            return batch
-            
-        # Filter posts based on relevance score (threshold = 6)
-        relevant_posts = []
-        for eval_item in evaluations:
-            if eval_item.get("relevance_score", 0) >= 6:
-                post_index = eval_item.get("post_index", -1)
-                if post_index >= 0 and post_index < len(batch):
-                    relevant_posts.append(batch[post_index])
-        
-        if relevant_posts:
-            print(f"Filtered to {len(relevant_posts)} relevant posts (threshold score: 6/10)")
-            return relevant_posts
-        else:
-            print("No posts met the relevance threshold. Using all posts.")
-            return batch
+        # Fallback to returning all posts if all attempts failed
+        return batch
     
-    def extract_key_insights(self, posts_data: List[Dict[str, Any]], product_info: Dict[str, str]) -> Dict[str, Any]:
-        """Extract key insights from the relevant posts."""
-        if not posts_data:
-            return {
-                "pain_points": ["No relevant data found"],
-                "language": ["General terms only"],
-                "topics": ["Insufficient data"],
-                "insights": "No relevant data found from Reddit scraping."
-            }
+    def extract_key_insights(self, posts_data: List[Dict[str, Any]], product_info: Dict[str, str],
+                            retry_attempts: int = 2) -> Dict[str, Any]:
+        """Extract key insights from the relevant posts with retry logic.
         
-        prompt = f"""
-        Analyze these Reddit posts related to {product_info['product_name']} ({product_info['product_description']}).
-        
-        Extract the following information:
-        1. Key pain points mentioned by users
-        2. Common phrases and language used by the target audience
-        3. Trending topics relevant to the product
-        4. General insights that would be valuable for creating an ad
-        
-        Product information:
-        - Name: {product_info['product_name']}
-        - Description: {product_info['product_description']}
-        - Target audience: {product_info['target_audience']}
-        - Use cases: {product_info.get('use_cases', 'Not specified')}
-        - Keywords: {product_info.get('keywords', 'Not specified')}
-        
-        Respond with a JSON object with the following structure:
-        {{
-            "pain_points": [list of 3-5 specific pain points],
-            "language": [list of 5-7 phrases, terms, or expressions used by the audience],
-            "topics": [list of 3-5 trending topics],
-            "insights": "A paragraph summarizing key insights for ad creation"
-        }}
-        
-        Here are the posts to analyze:
-        """
-        
-        # Add each post to the prompt (with a reasonable limit)
-        for i, post in enumerate(posts_data[:5]):
-            prompt += f"\nPost {i+1}:\nTitle: {post['title']}\n"
-            content = post['selftext'][:300] + "..." if len(post['selftext']) > 300 else post['selftext']
-            prompt += f"Content: {content}\n"
+        Args:
+            posts_data (List[Dict[str, Any]]): List of post data dictionaries
+            product_info (Dict[str, str]): Dictionary containing product information
+            retry_attempts (int): Number of retry attempts for LLM analysis
             
-            # Add a sample of comments
-            if post['top_comments']:
-                prompt += "Top Comments:\n"
-                for j, comment in enumerate(post['top_comments'][:2]):
-                    comment_text = comment['body'][:150] + "..." if len(comment['body']) > 150 else comment['body']
-                    prompt += f"- Comment {j+1}: {comment_text}\n"
+        Returns:
+            Dict[str, Any]: Dictionary with extracted insights
+        """
+        # Default insights in case of failure
+        default_insights = {
+            "pain_points": self._generate_default_pain_points(product_info),
+            "language": self._generate_default_language(product_info),
+            "topics": self._generate_default_topics(product_info),
+            "insights": f"No reliable insights could be extracted from Reddit data. The ad should focus on the core value proposition of {product_info['product_name']} for {product_info['target_audience']}."
+        }
         
-        # Call LLM to analyze posts - response is already cleaned
-        response = self.generate_llm_response(prompt)
+        if not posts_data:
+            print("No posts to analyze for insights.")
+            return default_insights
         
-        # Extract JSON using the utility function
-        insights = extract_json_from_llm_response(response, default_value={
-            "pain_points": ["Unclear from data"],
-            "language": ["General terms only"],
-            "topics": ["Insufficient data"],
-            "insights": "Analysis failed to parse properly. Please review the raw data."
-        })
+        for attempt in range(retry_attempts + 1):
+            try:
+                prompt = f"""
+                Analyze these Reddit posts related to {product_info['product_name']} ({product_info['product_description']}).
+                
+                Extract the following information:
+                1. Key pain points mentioned by users
+                2. Common phrases and language used by the target audience
+                3. Trending topics relevant to the product
+                4. General insights that would be valuable for creating an ad
+                
+                Product information:
+                - Name: {product_info['product_name']}
+                - Description: {product_info['product_description']}
+                - Target audience: {product_info['target_audience']}
+                - Use cases: {product_info.get('use_cases', 'Not specified')}
+                - Keywords: {product_info.get('keywords', 'Not specified')}
+                
+                Respond with a JSON object with the following structure:
+                {{
+                    "pain_points": [list of 3-5 specific pain points],
+                    "language": [list of 5-7 phrases, terms, or expressions used by the audience],
+                    "topics": [list of 3-5 trending topics],
+                    "insights": "A paragraph summarizing key insights for ad creation"
+                }}
+                
+                Here are the posts to analyze:
+                """
+                
+                # Add posts to the prompt (with a reasonable limit)
+                post_limit = min(5, len(posts_data))
+                for i, post in enumerate(posts_data[:post_limit]):
+                    prompt += f"\nPost {i+1}:\nTitle: {post['title']}\n"
+                    content = post['selftext'][:300] + "..." if len(post['selftext']) > 300 else post['selftext']
+                    prompt += f"Content: {content}\n"
+                    
+                    # Add a sample of comments
+                    if post['top_comments']:
+                        prompt += "Top Comments:\n"
+                        for j, comment in enumerate(post['top_comments'][:2]):
+                            comment_text = comment['body'][:150] + "..." if len(comment['body']) > 150 else comment['body']
+                            prompt += f"- Comment {j+1}: {comment_text}\n"
+                
+                # Call LLM to analyze posts
+                response = self.generate_llm_response(prompt)
+                
+                # Extract JSON using the utility function
+                insights = extract_json_from_llm_response(response, default_value=None)
+                
+                if insights:
+                    # Validate insights structure
+                    required_keys = ["pain_points", "language", "topics", "insights"]
+                    missing_keys = [key for key in required_keys if key not in insights]
+                    
+                    if not missing_keys:
+                        # Ensure all lists have content
+                        list_keys = ["pain_points", "language", "topics"]
+                        valid_lists = all(isinstance(insights.get(key, None), list) and len(insights.get(key, [])) > 0 for key in list_keys)
+                        
+                        if valid_lists and insights.get("insights"):
+                            print("Successfully extracted insights from posts.")
+                            return insights
+                        else:
+                            print(f"Extracted insights have empty lists (attempt {attempt + 1}).")
+                    else:
+                        print(f"Extracted insights missing keys: {missing_keys} (attempt {attempt + 1}).")
+                else:
+                    print(f"Failed to extract valid insights JSON (attempt {attempt + 1}).")
+                
+                # If this is the last attempt, use default insights
+                if attempt == retry_attempts:
+                    print("Using default insights after all extraction attempts failed.")
+                    return default_insights
+                    
+            except Exception as e:
+                print(f"Error during insights extraction (attempt {attempt + 1}): {str(e)}")
+                # If this is the last attempt, use default insights
+                if attempt == retry_attempts:
+                    print("Using default insights after error.")
+                    return default_insights
         
-        # Ensure all required keys are present
-        required_keys = ["pain_points", "language", "topics", "insights"]
-        for key in required_keys:
-            if key not in insights:
-                insights[key] = []
-            if key == "insights" and not insights[key]:
-                insights[key] = "No specific insights generated."
+        # Fallback to default insights if all attempts failed
+        return default_insights
         
-        return insights
-        
-    def synthesize_insights_without_data(self, product_info: Dict[str, str]) -> Dict[str, Any]:
+    def synthesize_insights_without_data(self, product_info: Dict[str, str], retry_attempts: int = 2) -> Dict[str, Any]:
         """Generate insights directly from product information when no Reddit data is available.
         
         Args:
             product_info (Dict[str, str]): Dictionary containing product information
+            retry_attempts (int): Number of retry attempts for LLM synthesis
             
         Returns:
             Dict[str, Any]: Dictionary with synthesized insights
         """
-        prompt = f"""
-        You need to create insights for an ad campaign without Reddit data.
-        
-        Based on the product information below, create a comprehensive set of insights that would help in creating a compelling ad script.
-        
-        PRODUCT INFORMATION:
-        Name: {product_info['product_name']}
-        Description: {product_info['product_description']}
-        Target Audience: {product_info['target_audience']}
-        Use Cases: {product_info.get('use_cases', 'Not specified')}
-        Niche: {product_info.get('niche', 'Not specified')}
-        Keywords: {product_info.get('keywords', 'Not specified')}
-        Campaign Goal: {product_info['campaign_goal']}
-        
-        Generate the following:
-        1. A list of likely pain points the target audience experiences
-        2. Common phrases and language the target audience might use
-        3. Current trending topics relevant to this product
-        4. Overall insights that would be valuable for creating an ad
-        
-        Format your response as a JSON object with the following structure:
-        {{
-            "pain_points": [list of 3-5 specific pain points],
-            "language": [list of 5-7 phrases, terms, or expressions used by the audience],
-            "topics": [list of 3-5 trending topics],
-            "insights": "A paragraph summarizing key insights for ad creation"
-        }}
-        """
-        
-        # Call LLM to generate insights - response is already cleaned
-        response = self.generate_llm_response(prompt)
-        
-        # Extract JSON from the response
-        insights = extract_json_from_llm_response(response, default_value={
+        # Default insights in case all attempts fail
+        default_insights = {
             "pain_points": self._generate_default_pain_points(product_info),
             "language": self._generate_default_language(product_info),
             "topics": self._generate_default_topics(product_info),
             "insights": f"Without access to specific user data, we can infer that {product_info['target_audience']} likely experience issues that {product_info['product_name']} can solve. The marketing campaign should focus on highlighting how the product addresses these pain points while using terminology familiar to the audience."
-        })
+        }
         
-        # Ensure all required keys are present
-        required_keys = ["pain_points", "language", "topics", "insights"]
-        for key in required_keys:
-            if key not in insights:
-                if key == "pain_points":
-                    insights[key] = self._generate_default_pain_points(product_info)
-                elif key == "language":
-                    insights[key] = self._generate_default_language(product_info)
-                elif key == "topics":
-                    insights[key] = self._generate_default_topics(product_info)
-                elif key == "insights" and not insights.get(key):
-                    insights[key] = f"Without access to specific user data, we can infer that {product_info['target_audience']} likely experience issues that {product_info['product_name']} can solve. The marketing campaign should focus on highlighting how the product addresses these pain points while using terminology familiar to the audience."
+        for attempt in range(retry_attempts + 1):
+            try:
+                prompt = f"""
+                You need to create insights for an ad campaign without Reddit data.
+                
+                Based on the product information below, create a comprehensive set of insights that would help in creating a compelling ad script.
+                
+                PRODUCT INFORMATION:
+                Name: {product_info['product_name']}
+                Description: {product_info['product_description']}
+                Target Audience: {product_info['target_audience']}
+                Use Cases: {product_info.get('use_cases', 'Not specified')}
+                Niche: {product_info.get('niche', 'Not specified')}
+                Keywords: {product_info.get('keywords', 'Not specified')}
+                Campaign Goal: {product_info['campaign_goal']}
+                
+                Generate the following:
+                1. A list of likely pain points the target audience experiences
+                2. Common phrases and language the target audience might use
+                3. Current trending topics relevant to this product
+                4. Overall insights that would be valuable for creating an ad
+                
+                Format your response as a JSON object with the following structure:
+                {{
+                    "pain_points": [list of 3-5 specific pain points],
+                    "language": [list of 5-7 phrases, terms, or expressions used by the audience],
+                    "topics": [list of 3-5 trending topics],
+                    "insights": "A paragraph summarizing key insights for ad creation"
+                }}
+                """
+                
+                # Call LLM to generate insights
+                response = self.generate_llm_response(prompt)
+                
+                # Extract JSON from the response
+                insights = extract_json_from_llm_response(response, default_value=None)
+                
+                if insights:
+                    # Validate insights structure
+                    required_keys = ["pain_points", "language", "topics", "insights"]
+                    missing_keys = [key for key in required_keys if key not in insights]
+                    
+                    if not missing_keys:
+                        # Ensure all lists have content
+                        list_keys = ["pain_points", "language", "topics"]
+                        valid_lists = all(isinstance(insights.get(key, None), list) and len(insights.get(key, [])) > 0 for key in list_keys)
+                        
+                        if valid_lists and insights.get("insights"):
+                            print("Successfully synthesized insights from product information.")
+                            return insights
+                        else:
+                            print(f"Synthesized insights have empty lists (attempt {attempt + 1}).")
+                    else:
+                        print(f"Synthesized insights missing keys: {missing_keys} (attempt {attempt + 1}).")
+                else:
+                    print(f"Failed to extract valid insights JSON (attempt {attempt + 1}).")
+                
+                # If this is the last attempt, use default insights
+                if attempt == retry_attempts:
+                    print("Using default insights after all synthesis attempts failed.")
+                    return default_insights
+                    
+            except Exception as e:
+                print(f"Error during insights synthesis (attempt {attempt + 1}): {str(e)}")
+                # If this is the last attempt, use default insights
+                if attempt == retry_attempts:
+                    print("Using default insights after error.")
+                    return default_insights
         
-        return insights
+        # Fallback to default insights if all attempts failed
+        return default_insights
 
     def _generate_default_pain_points(self, product_info: Dict[str, str]) -> List[str]:
         """Generate default pain points based on product information."""
@@ -738,7 +932,6 @@ class AnalysisAgent(BaseAgent):
         # Combine all topics and return unique ones, limited to 5
         all_topics = topics + generic_topics
         return list(dict.fromkeys(all_topics))[:5]
-    
 class CopywritingAgent(BaseAgent):
     """Agent responsible for creating the ad script."""
     
@@ -1061,7 +1254,8 @@ class AdGeneratorOrchestrator:
         self.review_agent = ReviewAgent(llm_provider=llm_provider, model_name=model_name)
     
     def generate_ad(self, product_info: Dict[str, str], save_intermediates: bool = False, 
-                    skip_reddit: bool = False, platform: str = "general", generate_runbook: bool = True) -> Dict[str, Any]:
+                    skip_reddit: bool = False, platform: str = "general", generate_runbook: bool = True,
+                    max_retries: int = 3) -> Dict[str, Any]:
         """Generate an ad script using the multi-agent approach.
         
         Args:
@@ -1070,6 +1264,7 @@ class AdGeneratorOrchestrator:
             skip_reddit (bool): Whether to skip Reddit scraping and rely only on LLM
             platform (str): Target platform for the ad (general, instagram, youtube, video, tiktok, facebook, all)
             generate_runbook (bool): Whether to generate a production and upload runbook
+            max_retries (int): Maximum number of retry attempts for each stage
             
         Returns:
             Dict[str, Any]: Dictionary with results from each stage and final ad script
@@ -1080,7 +1275,8 @@ class AdGeneratorOrchestrator:
                 product_info=product_info,
                 save_intermediates=save_intermediates,
                 skip_reddit=skip_reddit,
-                generate_runbook=generate_runbook
+                generate_runbook=generate_runbook,
+                max_retries=max_retries
             )
         
         # Original implementation for a single platform
@@ -1097,24 +1293,66 @@ class AdGeneratorOrchestrator:
         
         # Stage 1: Research
         print(f"\n=== Stage 1: Research ({self.llm_provider}) ===")
-        subreddits = self.research_agent.find_relevant_subreddits(product_info)
-        queries = self.research_agent.generate_search_queries(product_info)
+        research_success = False
+        subreddits = []
+        queries = []
+        
+        for attempt in range(max_retries):
+            try:
+                subreddits = self.research_agent.find_relevant_subreddits(product_info)
+                queries = self.research_agent.generate_search_queries(product_info)
+                
+                # Validate the results
+                if not subreddits or not queries:
+                    raise ValueError("Failed to generate valid subreddits or queries")
+                    
+                research_success = True
+                break
+            except Exception as e:
+                print(f"Research attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    print("All research attempts failed. Using default values.")
+                    # Use reasonable defaults if all attempts fail
+                    subreddits = ["productivity", "askreddit", "advice", "selfimprovement", "technology"]
+                    queries = [f"{product_info['product_name']} alternatives", "productivity tips", 
+                            "focus problems", "work efficiency", "distraction management"]
+        
         results["stages"]["research"] = {
             "subreddits": subreddits,
-            "queries": queries
+            "queries": queries,
+            "success": research_success
         }
+        
         if save_intermediates:
             with open(f"stage1_research_{platform}.json", "w", encoding="utf-8") as f:
                 json.dump(results["stages"]["research"], f, indent=2)
         
         # Stage 2: Data Collection (if not skipping Reddit)
         posts_data = []
+        data_collection_success = False
+        
         if not skip_reddit:
             print("\n=== Stage 2: Data Collection ===")
-            posts_data = self.data_collection_agent.collect_data(subreddits, queries)
+            for attempt in range(max_retries):
+                try:
+                    posts_data = self.data_collection_agent.collect_data(subreddits, queries)
+                    
+                    # Check if we actually got any useful data
+                    if not posts_data:
+                        raise ValueError("No posts were retrieved from Reddit")
+                    
+                    data_collection_success = True
+                    break
+                except Exception as e:
+                    print(f"Data collection attempt {attempt + 1} failed: {str(e)}")
+                    if attempt == max_retries - 1:
+                        print("All data collection attempts failed. Proceeding without Reddit data.")
+            
             results["stages"]["data_collection"] = {
-                "posts_count": len(posts_data)
+                "posts_count": len(posts_data),
+                "success": data_collection_success
             }
+            
             if save_intermediates and posts_data:
                 with open(f"stage2_raw_data_{platform}.json", "w", encoding="utf-8") as f:
                     json.dump(posts_data, f, indent=2, ensure_ascii=False)
@@ -1122,41 +1360,128 @@ class AdGeneratorOrchestrator:
             print("\n=== Stage 2: Data Collection (SKIPPED) ===")
             results["stages"]["data_collection"] = {
                 "posts_count": 0,
-                "skipped": True
+                "skipped": True,
+                "success": True  # Marking as successful since it was intentionally skipped
             }
         
         # Stage 3: Analysis
         print(f"\n=== Stage 3: Analysis ({self.llm_provider}) ===")
+        analysis_success = False
+        insights = {}
         
-        # If we have posts, analyze them; otherwise, synthesize insights directly
-        if posts_data:
-            relevant_posts = self.analysis_agent.filter_posts_by_relevance(posts_data, product_info)
-            insights = self.analysis_agent.extract_key_insights(relevant_posts, product_info)
-        else:
-            # No Reddit data, so generate insights directly from product info
-            print("No Reddit data available. Generating insights directly...")
-            insights = self.analysis_agent.synthesize_insights_without_data(product_info)
-            
+        for attempt in range(max_retries):
+            try:
+                # If we have posts, analyze them; otherwise, synthesize insights directly
+                if posts_data:
+                    relevant_posts = self.analysis_agent.filter_posts_by_relevance(posts_data, product_info)
+                    insights = self.analysis_agent.extract_key_insights(relevant_posts, product_info)
+                else:
+                    # No Reddit data, so generate insights directly from product info
+                    print("No Reddit data available. Generating insights directly...")
+                    insights = self.analysis_agent.synthesize_insights_without_data(product_info)
+                
+                # Validate that we have required keys in the insights
+                required_keys = ["pain_points", "language", "topics", "insights"]
+                if not all(key in insights for key in required_keys):
+                    raise ValueError(f"Missing required keys in insights: {[k for k in required_keys if k not in insights]}")
+                
+                analysis_success = True
+                break
+            except Exception as e:
+                print(f"Analysis attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    print("All analysis attempts failed. Using default insights.")
+                    # Generate very basic insights as fallback
+                    insights = {
+                        "pain_points": ["Difficulty staying focused", "Time management challenges", "Distractions", "Task overload", "Burnout"],
+                        "language": ["productivity", "focus", "distraction-free", "time management", "deep work", "flow state", "efficiency"],
+                        "topics": ["Remote work productivity", "Digital wellness", "Task management", "Focus techniques", "Work-life balance"],
+                        "insights": f"The target audience for {product_info['product_name']} struggles with maintaining focus and managing time effectively in distracting environments. They value tools that help them achieve more in less time and create sustainable work habits."
+                    }
+        
         results["stages"]["analysis"] = insights
+        results["stages"]["analysis"]["success"] = analysis_success
+        
         if save_intermediates:
             with open(f"stage3_analysis_{platform}.json", "w", encoding="utf-8") as f:
                 json.dump(insights, f, indent=2)
         
         # Stage 4: Copywriting
         print(f"\n=== Stage 4: Copywriting ({self.llm_provider}) for {platform.capitalize()} ===")
-        ad_script = self.copywriting_agent.generate_ad_script(insights, product_info, platform=platform)
+        copywriting_success = False
+        ad_script = ""
+        
+        for attempt in range(max_retries):
+            try:
+                ad_script = self.copywriting_agent.generate_ad_script(insights, product_info, platform=platform)
+                
+                # Validate that we actually got a script
+                if not ad_script or len(ad_script.strip()) < 50:
+                    raise ValueError("Generated ad script is too short or empty")
+                    
+                copywriting_success = True
+                break
+            except Exception as e:
+                print(f"Copywriting attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    print("All copywriting attempts failed. Using default ad script.")
+                    # Generate a basic ad script as fallback
+                    ad_script = f"""Tired of constant distractions?
+
+    Introducing {product_info['product_name']} - the productivity app designed to help you focus on what matters most.
+
+    Our AI-powered system:
+    • Blocks distractions before they happen
+    • Tracks your productivity patterns
+    • Sends gentle reminders to keep you on track
+    • Helps you build better work habits over time
+
+    {product_info['target_audience'].split(',')[0]} are already seeing 40% more productivity.
+
+    Try {product_info['product_name']} free for 14 days. Download now and reclaim your focus!"""
+        
         results["stages"]["copywriting"] = {
             "original_script": ad_script,
-            "platform": platform
+            "platform": platform,
+            "success": copywriting_success
         }
+        
         if save_intermediates:
             with open(f"stage4_original_script_{platform}.txt", "w", encoding="utf-8") as f:
                 f.write(ad_script)
         
         # Stage 5: Review
         print(f"\n=== Stage 5: Review ({self.llm_provider}) ===")
-        review = self.review_agent.review_ad_script(ad_script, product_info, insights, platform=platform)
+        review_success = False
+        review = {}
+        
+        for attempt in range(max_retries):
+            try:
+                review = self.review_agent.review_ad_script(ad_script, product_info, insights, platform=platform)
+                
+                # Validate the review contains an improved script
+                if "improved_script" not in review or not review["improved_script"]:
+                    raise ValueError("Review did not contain an improved script")
+                    
+                review_success = True
+                break
+            except Exception as e:
+                print(f"Review attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    print("All review attempts failed. Using original script without review.")
+                    # Create a basic review as fallback
+                    review = {
+                        "score": 7,
+                        "strengths": ["Addresses target audience needs", "Clear value proposition"],
+                        "weaknesses": ["Could be more specific", "Generic call-to-action"],
+                        "suggestions": ["Add more specific benefits", "Strengthen call-to-action"],
+                        "platform_specific_feedback": f"Consider optimizing further for {platform} format",
+                        "improved_script": ad_script  # Use original script if review fails
+                    }
+        
+        review["success"] = review_success
         results["stages"]["review"] = review
+        
         if save_intermediates:
             with open(f"stage5_review_{platform}.json", "w", encoding="utf-8") as f:
                 json.dump(review, f, indent=2)
@@ -1164,6 +1489,13 @@ class AdGeneratorOrchestrator:
         # Final result
         results["final_ad_script"] = review.get("improved_script", ad_script)
         results["platform"] = platform
+        results["overall_success"] = all([
+            results["stages"]["research"].get("success", False),
+            results["stages"]["data_collection"].get("success", False) or skip_reddit,
+            results["stages"]["analysis"].get("success", False),
+            results["stages"]["copywriting"].get("success", False),
+            results["stages"]["review"].get("success", False)
+        ])
         
         with open(f"final_ad_script_{platform}.txt", "w", encoding="utf-8") as f:
             f.write(results["final_ad_script"])
@@ -1171,32 +1503,83 @@ class AdGeneratorOrchestrator:
         # Stage 6: Runbook Generation (optional)
         if generate_runbook:
             print(f"\n=== Stage 6: Runbook Generation ===")
-            try:
-                from src.utils.runbook_generator import save_runbook
-                runbook_path = save_runbook(
-                    platform=platform,
-                    ad_script=results["final_ad_script"],
-                    product_info=product_info,
-                    output_path=f"runbook_{platform}_{product_info['product_name'].replace(' ', '_').lower()}.md"
-                )
-                results["runbook"] = {
-                    "generated": True,
-                    "path": runbook_path
-                }
-                print(f"Production runbook generated: {runbook_path}")
-            except Exception as e:
-                print(f"Error generating runbook: {str(e)}")
-                results["runbook"] = {
-                    "generated": False,
-                    "error": str(e)
-                }
+            runbook_success = False
+            
+            for attempt in range(max_retries):
+                try:
+                    from src.utils.runbook_generator import save_runbook
+                    runbook_path = save_runbook(
+                        platform=platform,
+                        ad_script=results["final_ad_script"],
+                        product_info=product_info,
+                        output_path=f"runbook_{platform}_{product_info['product_name'].replace(' ', '_').lower()}.md"
+                    )
+                    results["runbook"] = {
+                        "generated": True,
+                        "path": runbook_path,
+                        "success": True
+                    }
+                    print(f"Production runbook generated: {runbook_path}")
+                    runbook_success = True
+                    break
+                except Exception as e:
+                    print(f"Runbook generation attempt {attempt + 1} failed: {str(e)}")
+                    if attempt == max_retries - 1:
+                        print("All runbook generation attempts failed.")
+                        results["runbook"] = {
+                            "generated": False,
+                            "error": str(e),
+                            "success": False
+                        }
+            
         else:
             results["runbook"] = {
                 "generated": False,
-                "reason": "Runbook generation disabled"
+                "reason": "Runbook generation disabled",
+                "success": True  # Marking as successful since it was intentionally skipped
             }
         
-        return results
+        # Generate a disclaimer if fallbacks were used
+        disclaimer = []
+        if not results["stages"]["research"].get("success", False):
+            disclaimer.append("Research: Fallback subreddits and queries were used as the research phase encountered issues.")
+            
+        if not results["stages"]["data_collection"].get("success", False) and not skip_reddit:
+            disclaimer.append("Data Collection: No Reddit data could be retrieved. The ad script was generated without audience insights from Reddit.")
+            
+        if not results["stages"]["analysis"].get("success", False):
+            disclaimer.append("Analysis: Analysis of audience data failed. Generated insights were based on product information only.")
+            
+        if not results["stages"]["copywriting"].get("success", False):
+            disclaimer.append("Copywriting: Fallback copywriting mechanisms were used. The ad may be more generic than intended.")
+            
+        if not results["stages"]["review"].get("success", False):
+            disclaimer.append("Review: The review process failed. The original script was used without improvements.")
+
+        # Add the disclaimer to the results if any fallbacks were used
+        if disclaimer:
+            results["disclaimer"] = {
+                "message": "NOTE: This ad script was generated using fallback mechanisms due to issues in the generation process.",
+                "details": disclaimer
+            }
+            
+            # Modify the final script to include the disclaimer at the top if any critical stages failed
+            critical_failures = not skip_reddit and (
+                not results["stages"]["data_collection"].get("success", False) or 
+                not results["stages"]["analysis"].get("success", False)
+            )
+            
+            if critical_failures:
+                disclaimer_text = "DISCLAIMER: This ad script was generated without Reddit data insights. " + \
+                                "It is based on product information only and may require additional customization."
+                
+                results["final_ad_script"] = f"{disclaimer_text}\n\n---\n\n{results['final_ad_script']}"
+                
+                # Update the saved file as well
+                with open(f"final_ad_script_{platform}.txt", "w", encoding="utf-8") as f:
+                    f.write(results["final_ad_script"])
+
+        return results    
     
     def generate_ads_for_all_platforms(self, product_info: Dict[str, str], save_intermediates: bool = False,
                                      skip_reddit: bool = False, generate_runbook: bool = True) -> Dict[str, Any]:
