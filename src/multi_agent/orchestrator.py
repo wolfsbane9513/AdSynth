@@ -24,8 +24,11 @@ def generate_tts_script(ad_script):
     Returns:
         str: A clean script suitable for text-to-speech platforms like ElevenLabs
     """
+    # Remove section headers with hyphens (e.g., "- Opening Hook")
+    cleaned_script = re.sub(r'- [A-Za-z\s]+ ', '', ad_script)
+    
     # Remove scene descriptions in square brackets (all platforms)
-    cleaned_script = re.sub(r'\[.*?\]', '', ad_script)
+    cleaned_script = re.sub(r'\[.*?\]', '', cleaned_script)
     
     # Remove formatting indicators for all platforms
     cleaned_script = re.sub(r'\*.*?\*', '', cleaned_script)  # Asterisk formatting
@@ -48,20 +51,49 @@ def generate_tts_script(ad_script):
     cleaned_script = re.sub(r'\[VISUAL\]:.*?(\n|$)', '', cleaned_script)   # Visual directions
     cleaned_script = re.sub(r'\[TEXT\]:.*?(\n|$)', '', cleaned_script)     # On-screen text
     cleaned_script = re.sub(r'\[AUDIO\]:', '', cleaned_script)             # Audio directions but keep content
+    cleaned_script = re.sub(r'\[Sound:.*?\]', '', cleaned_script)          # Sound effect descriptions
     
     # Handle Instagram-specific formatting
     cleaned_script = re.sub(r'#\w+', '', cleaned_script)                   # Remove hashtags
     cleaned_script = re.sub(r'@\w+', '', cleaned_script)                   # Remove mentions
+    cleaned_script = re.sub(r'\[Image \d+ of \d+\]', '', cleaned_script)   # Image carousel indicators
     
     # Handle Facebook-specific formatting
     cleaned_script = re.sub(r'Headline:.*?(\n|$)', '', cleaned_script)     # Headline indicator
     cleaned_script = re.sub(r'Main Copy:', '', cleaned_script)             # Main copy indicator but keep content
     cleaned_script = re.sub(r'CTA:', '', cleaned_script)                   # CTA indicator but keep content
+    cleaned_script = re.sub(r'Link Description:.*?(\n|$)', '', cleaned_script)  # Link descriptions
+    cleaned_script = re.sub(r'URL:.*?(\n|$)', '', cleaned_script)          # URL lines
+    cleaned_script = re.sub(r'\[([A-Z\s]+)\]', '', cleaned_script)         # CTA button text in brackets
+    
+    # Handle numbered lists that might be in Facebook/general formats
+    cleaned_script = re.sub(r'^\d+\.\s+', '', cleaned_script, flags=re.MULTILINE)  # Numbered list markers
+    cleaned_script = re.sub(r'•\s+', '', cleaned_script)                   # Bullet points
+    
+    # Handle additional section headers that might appear with or without formatting
+    section_headers = [
+        'Opening Hook', 'Problem Statement', 'Product Introduction', 
+        'Features and Benefits', 'Testimonial or Demonstration', 'Call-to-Action',
+        'Hook', 'Problem', 'Solution', 'Benefit', 'Proof', 'CTA'
+    ]
+    for header in section_headers:
+        cleaned_script = re.sub(rf'{header}[:\s]*', '', cleaned_script, flags=re.IGNORECASE)
+    
+    # Remove section headers with numbers and timestamps
+    cleaned_script = re.sub(r'\[\d+:\d+-\d+:\d+\].*?(?=\n|$)', '', cleaned_script)
     
     # Remove quotes around dialogue for all platforms
     cleaned_script = cleaned_script.replace('"', '')
     cleaned_script = cleaned_script.replace('"', '')
     cleaned_script = cleaned_script.replace('"', '')
+    cleaned_script = cleaned_script.replace("'", '')
+    
+    # Handle common symbols for better speech
+    cleaned_script = cleaned_script.replace('$', ' dollars ')
+    cleaned_script = cleaned_script.replace('%', ' percent ')
+    cleaned_script = cleaned_script.replace('&', ' and ')
+    cleaned_script = cleaned_script.replace('@', ' at ')
+    cleaned_script = cleaned_script.replace('/', ' or ')
     
     # Remove any remaining special formatting characters
     cleaned_script = cleaned_script.replace('*', '')
@@ -87,7 +119,10 @@ def generate_tts_script(ad_script):
     cleaned_script = re.sub(r'End of Ad', '', cleaned_script)
     cleaned_script = re.sub(r'End of Script', '', cleaned_script)
     
-    return cleaned_script.strip()
+    # Final trimming
+    cleaned_script = cleaned_script.strip()
+    
+    return cleaned_script
 class BaseAgent:
     """Base class for all agents with common LLM functionality."""
     
