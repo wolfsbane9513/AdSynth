@@ -1,3 +1,4 @@
+
 """
 Multi-Agent Architecture for AI Ad Generator.
 This module orchestrates multiple specialized agents to create relevant ad scripts.
@@ -5,12 +6,88 @@ This module orchestrates multiple specialized agents to create relevant ad scrip
 
 import json
 import re
+import os
 from typing import List, Dict, Any, Tuple, Optional
 from src.config import Config
 from src.scraping import scrape_subreddit
 from src.utils.json_utils import extract_json_from_llm_response
 from collections import Counter
 
+def generate_tts_script(ad_script):
+    """
+    Convert a formatted ad script into a clean text-to-speech version.
+    Handles multiple platform formats (YouTube, Instagram, TikTok, etc.)
+    
+    Args:
+        ad_script (str): The original formatted ad script
+        
+    Returns:
+        str: A clean script suitable for text-to-speech platforms like ElevenLabs
+    """
+    # Remove scene descriptions in square brackets (all platforms)
+    cleaned_script = re.sub(r'\[.*?\]', '', ad_script)
+    
+    # Remove formatting indicators for all platforms
+    cleaned_script = re.sub(r'\*.*?\*', '', cleaned_script)  # Asterisk formatting
+    cleaned_script = re.sub(r'_.*?_', '', cleaned_script)    # Underscore formatting
+    
+    # Remove actor/role prefixes and dialogue indicators
+    cleaned_script = re.sub(r'[A-Za-z]+\s*\([^)]*\):', '', cleaned_script)  # Character with description
+    cleaned_script = re.sub(r'[A-Za-z]+\s*\(.*?\):', '', cleaned_script)    # Alternative format
+    cleaned_script = re.sub(r'[A-Za-z]+:', '', cleaned_script)              # Simple character prefix
+    
+    # Handle YouTube/Video-specific formatting
+    cleaned_script = re.sub(r'---+', ' ', cleaned_script)                  # Section dividers
+    cleaned_script = re.sub(r'\*\*\[.*?\]\*\*', '', cleaned_script)        # Bold timestamps
+    cleaned_script = re.sub(r'\*\*.*?\*\*', '', cleaned_script)            # Bold section headers
+    cleaned_script = re.sub(r'Visual:.*?(\n|$)', '', cleaned_script)       # Visual descriptions
+    cleaned_script = re.sub(r'SCENE \d+:.*?(\n|$)', '', cleaned_script)    # Scene headers
+    cleaned_script = re.sub(r'\[SCENE \d+\].*?(\n|$)', '', cleaned_script) # Alternative scene format
+    
+    # Handle TikTok-specific formatting
+    cleaned_script = re.sub(r'\[VISUAL\]:.*?(\n|$)', '', cleaned_script)   # Visual directions
+    cleaned_script = re.sub(r'\[TEXT\]:.*?(\n|$)', '', cleaned_script)     # On-screen text
+    cleaned_script = re.sub(r'\[AUDIO\]:', '', cleaned_script)             # Audio directions but keep content
+    
+    # Handle Instagram-specific formatting
+    cleaned_script = re.sub(r'#\w+', '', cleaned_script)                   # Remove hashtags
+    cleaned_script = re.sub(r'@\w+', '', cleaned_script)                   # Remove mentions
+    
+    # Handle Facebook-specific formatting
+    cleaned_script = re.sub(r'Headline:.*?(\n|$)', '', cleaned_script)     # Headline indicator
+    cleaned_script = re.sub(r'Main Copy:', '', cleaned_script)             # Main copy indicator but keep content
+    cleaned_script = re.sub(r'CTA:', '', cleaned_script)                   # CTA indicator but keep content
+    
+    # Remove quotes around dialogue for all platforms
+    cleaned_script = cleaned_script.replace('"', '')
+    cleaned_script = cleaned_script.replace('"', '')
+    cleaned_script = cleaned_script.replace('"', '')
+    
+    # Remove any remaining special formatting characters
+    cleaned_script = cleaned_script.replace('*', '')
+    cleaned_script = cleaned_script.replace('(V.O.)', '')
+    cleaned_script = cleaned_script.replace('VOICEOVER:', '')
+    cleaned_script = cleaned_script.replace('ON-SCREEN TEXT:', '')
+    
+    # Remove empty lines
+    cleaned_script = re.sub(r'\n\s*\n', '\n', cleaned_script)
+    
+    # Remove extra whitespace and normalize spacing
+    cleaned_script = re.sub(r'\s+', ' ', cleaned_script)
+    
+    # Clean up multiple periods and ensure proper spacing
+    cleaned_script = re.sub(r'\.+', '.', cleaned_script)
+    cleaned_script = re.sub(r'\.\s*\.', '.', cleaned_script)
+    
+    # Final cleanup - remove any markdown formatting that might remain
+    cleaned_script = re.sub(r'\*+', '', cleaned_script)
+    cleaned_script = re.sub(r'_+', '', cleaned_script)
+    
+    # Remove starting and ending indicators
+    cleaned_script = re.sub(r'End of Ad', '', cleaned_script)
+    cleaned_script = re.sub(r'End of Script', '', cleaned_script)
+    
+    return cleaned_script.strip()
 class BaseAgent:
     """Base class for all agents with common LLM functionality."""
     
@@ -1499,6 +1576,16 @@ class AdGeneratorOrchestrator:
         
         with open(f"final_ad_script_{platform}.txt", "w", encoding="utf-8") as f:
             f.write(results["final_ad_script"])
+
+        # Generate a clean TTS script for ElevenLabs
+        tts_script = generate_tts_script(results["final_ad_script"])
+        tts_script_path = f"final_ad_script_{platform}_tts.txt"
+        with open(tts_script_path, "w", encoding="utf-8") as f:
+            f.write(tts_script)
+        
+        # Add the TTS script to the results
+        results["tts_script"] = tts_script
+        results["tts_script_path"] = tts_script_path
         
         # Stage 6: Runbook Generation (optional)
         if generate_runbook:
@@ -1695,6 +1782,16 @@ class AdGeneratorOrchestrator:
             
             with open(f"final_ad_script_{platform}.txt", "w", encoding="utf-8") as f:
                 f.write(platform_results["final_ad_script"])
+
+            # Generate a clean TTS script for ElevenLabs
+            tts_script = generate_tts_script(platform_results["final_ad_script"])
+            tts_script_path = f"final_ad_script_{platform}_tts.txt"
+            with open(tts_script_path, "w", encoding="utf-8") as f:
+                f.write(tts_script)
+            
+            # Add the TTS script to the results
+            platform_results["tts_script"] = tts_script
+            platform_results["tts_script_path"] = tts_script_path
             
             # Stage 6: Runbook Generation (optional, platform-specific)
             if generate_runbook:

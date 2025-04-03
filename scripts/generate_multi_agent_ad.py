@@ -163,6 +163,14 @@ def main():
             print("-"*50)
             print(results["final_ad_script"])
             print("-"*50)
+
+            if "tts_script_path" in results:
+                print(f"\nElevenLabs TTS Script saved to: {results['tts_script_path']}")
+                print("TTS Script Preview:")
+                print("-"*30)
+                preview = results["tts_script"][:150] + "..." if len(results["tts_script"]) > 150 else results["tts_script"]
+                print(preview)
+                print("-"*30)
             
             # Show runbook path if generated
             if "runbook" in results and results["runbook"].get("generated", False):
@@ -174,6 +182,9 @@ def main():
             for platform, platform_results in results["platforms"].items():
                 print(f"\n{platform.upper()} AD SCRIPT:")
                 print(f"Saved to: final_ad_script_{platform}.txt")
+
+                if "tts_script_path" in platform_results:
+                    print(f"ElevenLabs TTS Script: {platform_results['tts_script_path']}")                
                 
                 # Show runbook path if generated
                 if "runbook" in platform_results and platform_results["runbook"].get("generated", False):
