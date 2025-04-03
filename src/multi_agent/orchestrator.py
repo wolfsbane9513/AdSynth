@@ -24,6 +24,8 @@ def generate_tts_script(ad_script):
     Returns:
         str: A clean script suitable for text-to-speech platforms like ElevenLabs
     """
+    import re
+    
     # Remove section headers with hyphens (e.g., "- Opening Hook")
     cleaned_script = re.sub(r'- [A-Za-z\s]+ ', '', ad_script)
     
@@ -71,13 +73,17 @@ def generate_tts_script(ad_script):
     cleaned_script = re.sub(r'•\s+', '', cleaned_script)                   # Bullet points
     
     # Handle additional section headers that might appear with or without formatting
+    # This is especially important for your case with "Statement", "Introduction", etc.
     section_headers = [
         'Opening Hook', 'Problem Statement', 'Product Introduction', 
         'Features and Benefits', 'Testimonial or Demonstration', 'Call-to-Action',
-        'Hook', 'Problem', 'Solution', 'Benefit', 'Proof', 'CTA'
+        'Hook', 'Problem', 'Solution', 'Benefit', 'Proof', 'CTA', 'Statement',
+        'Introduction', 'Demonstration'
     ]
     for header in section_headers:
-        cleaned_script = re.sub(rf'{header}[:\s]*', '', cleaned_script, flags=re.IGNORECASE)
+        # Using word boundaries \b to ensure we match whole words, not parts of words
+        pattern = r'\b' + re.escape(header) + r'\b'
+        cleaned_script = re.sub(pattern, '', cleaned_script, flags=re.IGNORECASE)
     
     # Remove section headers with numbers and timestamps
     cleaned_script = re.sub(r'\[\d+:\d+-\d+:\d+\].*?(?=\n|$)', '', cleaned_script)
@@ -118,6 +124,9 @@ def generate_tts_script(ad_script):
     # Remove starting and ending indicators
     cleaned_script = re.sub(r'End of Ad', '', cleaned_script)
     cleaned_script = re.sub(r'End of Script', '', cleaned_script)
+    
+    # Remove single letter "s" that might appear in the text (from your example)
+    cleaned_script = re.sub(r'\bs\b', '', cleaned_script)
     
     # Final trimming
     cleaned_script = cleaned_script.strip()
